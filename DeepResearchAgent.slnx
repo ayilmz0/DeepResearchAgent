@@ -1,0 +1,7 @@
+<Solution>
+  <Project Path="DeepResearchAgent.Core/DeepResearchAgent.Core.csproj" />
+  <Project Path="DeepResearchAgent.Engine/DeepResearchAgent.Engine.csproj" />
+  <Project Path="DeepResearchAgent.Infrastructure/DeepResearchAgent.Infrastructure.csproj" />
+  <Project Path="DeepResearchAgent.WebAPI/DeepResearchAgent.WebAPI.csproj" />
+  <Project Path="DeepResearchAgent.Worker/DeepResearchAgent.Worker.csproj" />
+</Solution>
