@@ -7,7 +7,14 @@ namespace DeepResearchAgent.Engine.Services;
 
 public class ResearchService : IResearchService
 {
-    public Task<CreateResearchResponse> CreateResearchAsync(
+    private readonly IResearchRepository _researchRepository;
+
+    public ResearchService(IResearchRepository researchRepository)
+    {
+        _researchRepository = researchRepository;
+    }
+
+    public async Task<CreateResearchResponse> CreateResearchAsync(
         CreateResearchRequest request,
         CancellationToken cancellationToken = default)
     {
@@ -19,11 +26,37 @@ public class ResearchService : IResearchService
             CreatedAt = DateTime.UtcNow
         };
 
-        var response = new CreateResearchResponse
+        await _researchRepository.AddAsync(
+            research,
+            cancellationToken);
+
+        return new CreateResearchResponse
         {
             Id = research.Id
         };
+    }
+        
+    public async Task<GetResearchResponse?> GetResearchByIdAsync(
+    Guid id,
+    CancellationToken cancellationToken = default)
+    {
+        var research = await _researchRepository.GetByIdAsync(
+            id,
+            cancellationToken);
 
-        return Task.FromResult(response);
+        if (research is null)
+        {
+            return null;
+        }
+
+        return new GetResearchResponse
+        {
+            Id = research.Id,
+            Query = research.Query,
+            Status = research.Status.ToString(),
+            CreatedAt = research.CreatedAt,
+            StartedAt = research.StartedAt,
+            CompletedAt = research.CompletedAt
+        };
     }
 }
