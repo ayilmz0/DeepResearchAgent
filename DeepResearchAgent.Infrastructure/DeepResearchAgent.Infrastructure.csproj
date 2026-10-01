@@ -6,4 +6,9 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\DeepResearchAgent.Core\DeepResearchAgent.Core.csproj" />
+    <ProjectReference Include="..\DeepResearchAgent.Engine\DeepResearchAgent.Engine.csproj" />
+  </ItemGroup>
+
 </Project>
