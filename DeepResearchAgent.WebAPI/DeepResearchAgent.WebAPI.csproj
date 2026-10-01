@@ -10,4 +10,13 @@
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.12" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\DeepResearchAgent.Engine\DeepResearchAgent.Engine.csproj" />
+    <ProjectReference Include="..\DeepResearchAgent.Infrastructure\DeepResearchAgent.Infrastructure.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Folder Include="Controllers\" />
+  </ItemGroup>
+
 </Project>
