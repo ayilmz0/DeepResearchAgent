@@ -14,6 +14,27 @@ public class ResearchService : IResearchService
         _researchRepository = researchRepository;
     }
 
+    public async Task<bool> ProcessPendingResearchAsync(
+    CancellationToken cancellationToken = default)
+    {
+        var research = await _researchRepository.GetPendingResearchAsync(
+            cancellationToken);
+
+        if (research is null)
+        {
+            return false;
+        }
+
+        research.Status = ResearchStatus.Planning;
+        research.StartedAt = DateTime.UtcNow;
+
+        await _researchRepository.UpdateAsync(
+            research,
+            cancellationToken);
+
+        return true;
+    }
+
     public async Task<CreateResearchResponse> CreateResearchAsync(
         CreateResearchRequest request,
         CancellationToken cancellationToken = default)

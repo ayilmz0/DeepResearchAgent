@@ -11,4 +11,11 @@ public interface IResearchRepository
     Task<Research?> GetByIdAsync(
         Guid id,
         CancellationToken cancellationToken = default);
+
+    Task<Research?> GetPendingResearchAsync(
+        CancellationToken cancellationToken = default);
+
+    Task UpdateAsync(
+        Research research,
+        CancellationToken cancellationToken = default);
 }

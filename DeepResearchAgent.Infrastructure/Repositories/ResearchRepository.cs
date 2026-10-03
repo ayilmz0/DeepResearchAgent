@@ -1,4 +1,5 @@
 ﻿using DeepResearchAgent.Core.Entities;
+using DeepResearchAgent.Core.Enums;
 using DeepResearchAgent.Engine.Interfaces;
 using Microsoft.EntityFrameworkCore;
 
@@ -32,5 +33,23 @@ public class ResearchRepository : IResearchRepository
             .FirstOrDefaultAsync(
                 x => x.Id == id,
                 cancellationToken);
+    }
+
+    public async Task<Research?> GetPendingResearchAsync(
+        CancellationToken cancellationToken = default)
+    {
+        return await _context.Researches
+            .Where(x => x.Status == ResearchStatus.Pending)
+            .OrderBy(x => x.CreatedAt)
+            .FirstOrDefaultAsync(cancellationToken);
+    }
+
+    public async Task UpdateAsync(
+        Research research,
+        CancellationToken cancellationToken = default)
+    {
+        _context.Researches.Update(research);
+
+        await _context.SaveChangesAsync(cancellationToken);
     }
 }
