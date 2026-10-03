@@ -14,6 +14,29 @@ public class ResearchRepository : IResearchRepository
         _context = context;
     }
 
+    public async Task AddSourcesAsync(
+    IEnumerable<Source> sources,
+    CancellationToken cancellationToken = default)
+    {
+        await _context.Sources.AddRangeAsync(
+            sources,
+            cancellationToken);
+
+        await _context.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<ResearchTask>> GetPendingTasksAsync(
+    Guid researchId,
+    CancellationToken cancellationToken = default)
+    {
+        return await _context.ResearchTasks
+            .Where(x =>
+                x.ResearchId == researchId &&
+                x.Status == ResearchStatus.Pending)
+            .OrderBy(x => x.Depth)
+            .ToListAsync(cancellationToken);
+    }
+
     public async Task<Research?> GetPendingResearchAsync(CancellationToken cancellationToken = default)
     {
         return await _context.Researches

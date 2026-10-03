@@ -4,6 +4,7 @@ using DeepResearchAgent.Infrastructure.Services.Planning;
 using DeepResearchAgent.Infrastructure.Persistence;
 using DeepResearchAgent.Infrastructure.Persistence.Repositories;
 using Microsoft.EntityFrameworkCore;
+using DeepResearchAgent.Infrastructure.Services.Search;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -20,9 +21,19 @@ builder.Services.AddCors(options =>
     });
 });
 
+builder.Services.AddHttpClient<IResearchSearcher, SearchService>(
+    client =>
+    {
+        client.BaseAddress = new Uri(
+            "https://api.tavily.com/");
+    });
+
 builder.Services.AddScoped<IResearchRepository, ResearchRepository>();
 builder.Services.AddScoped<IResearchService, ResearchService>();
 builder.Services.AddScoped<IResearchPlanner, ResearchPlanner>();
+
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen();
 
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlServer(
@@ -34,7 +45,8 @@ var app = builder.Build();
 
 if (app.Environment.IsDevelopment())
 {
-    app.MapOpenApi();
+    app.UseSwagger();
+    app.UseSwaggerUI();
 }
 
 app.UseCors("Frontend");

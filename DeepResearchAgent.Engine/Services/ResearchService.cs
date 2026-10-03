@@ -10,10 +10,13 @@ public class ResearchService : IResearchService
     private readonly IResearchRepository _researchRepository;
     private readonly IResearchPlanner _researchPlanner;
 
-    public ResearchService(IResearchRepository researchRepository, IResearchPlanner researchPlanner)
+    private readonly IResearchSearcher _researchSearcher;
+
+    public ResearchService(IResearchRepository researchRepository, IResearchPlanner researchPlanner, IResearchSearcher researchSearcher)
     {
         _researchRepository = researchRepository;
         _researchPlanner = researchPlanner;
+        _researchSearcher = researchSearcher;
     }
 
     public async Task<bool> ProcessPendingResearchAsync(
@@ -39,6 +42,43 @@ public class ResearchService : IResearchService
             cancellationToken);
 
         research.Status = ResearchStatus.Searching;
+
+        await _researchRepository.UpdateAsync(
+            research,
+            cancellationToken);
+
+        var pendingTasks =
+            await _researchRepository.GetPendingTasksAsync(
+                research.Id,
+                cancellationToken);
+
+        foreach (var task in pendingTasks)
+        {
+            var searchResults =
+                await _researchSearcher.SearchAsync(
+                    task.Query,
+                    cancellationToken);
+
+            var sources = searchResults
+                .Select(result => new Source
+                {
+                    Id = Guid.NewGuid(),
+                    ResearchId = research.Id,
+                    Url = result.Url,
+                    Title = result.Title,
+                    Content = result.Snippet,
+                    CrawledAt = DateTime.UtcNow,
+                    Depth = task.Depth,
+                    RelevanceScore = 0
+                })
+                .ToList();
+
+            await _researchRepository.AddSourcesAsync(
+                sources,
+                cancellationToken);
+
+            task.Status = ResearchStatus.Completed;
+        }
 
         await _researchRepository.UpdateAsync(
             research,
