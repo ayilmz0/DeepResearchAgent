@@ -20,8 +20,4 @@
     <ProjectReference Include="..\DeepResearchAgent.Engine\DeepResearchAgent.Engine.csproj" />
   </ItemGroup>
 
-  <ItemGroup>
-    <Folder Include="Services\" />
-  </ItemGroup>
-
 </Project>

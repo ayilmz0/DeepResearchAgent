@@ -27,24 +27,29 @@ public class Worker : BackgroundService
             var researchService =
                 scope.ServiceProvider.GetRequiredService<IResearchService>();
 
-            var processed =
-                await researchService.ProcessPendingResearchAsync(
-                    stoppingToken);
-
-            if (processed)
+            try
             {
-                _logger.LogInformation(
-                    "Pending research processed.");
-            }
-            else
-            {
-                _logger.LogInformation(
-                    "No pending research found.");
-            }
+                var processed =
+                    await researchService.ProcessPendingResearchAsync(
+                        stoppingToken);
 
-            await Task.Delay(
-                TimeSpan.FromSeconds(5),
-                stoppingToken);
+                if (processed)
+                {
+                    _logger.LogInformation(
+                        "Pending research processed.");
+                }
+                else
+                {
+                    _logger.LogInformation(
+                        "No pending research found.");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(
+                    ex,
+                    "ProcessPendingResearchAsync hata verdi.");
+            }
         }
     }
 }
