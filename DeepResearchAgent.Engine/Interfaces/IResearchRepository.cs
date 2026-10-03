@@ -15,6 +15,10 @@ public interface IResearchRepository
     Task<Research?> GetPendingResearchAsync(
         CancellationToken cancellationToken = default);
 
+    Task AddTasksAsync(
+        IEnumerable<ResearchTask> tasks,
+        CancellationToken cancellationToken = default);
+
     Task UpdateAsync(
         Research research,
         CancellationToken cancellationToken = default);

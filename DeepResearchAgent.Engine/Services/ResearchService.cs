@@ -8,10 +8,12 @@ namespace DeepResearchAgent.Engine.Services;
 public class ResearchService : IResearchService
 {
     private readonly IResearchRepository _researchRepository;
+    private readonly IResearchPlanner _researchPlanner;
 
-    public ResearchService(IResearchRepository researchRepository)
+    public ResearchService(IResearchRepository researchRepository, IResearchPlanner researchPlanner)
     {
         _researchRepository = researchRepository;
+        _researchPlanner = researchPlanner;
     }
 
     public async Task<bool> ProcessPendingResearchAsync(
@@ -27,6 +29,16 @@ public class ResearchService : IResearchService
 
         research.Status = ResearchStatus.Planning;
         research.StartedAt = DateTime.UtcNow;
+
+        var tasks = await _researchPlanner.CreatePlanAsync(
+            research,
+            cancellationToken);
+
+        await _researchRepository.AddTasksAsync(
+            tasks,
+            cancellationToken);
+
+        research.Status = ResearchStatus.Searching;
 
         await _researchRepository.UpdateAsync(
             research,

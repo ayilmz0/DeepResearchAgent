@@ -1,5 +1,6 @@
 using DeepResearchAgent.Engine.Interfaces;
 using DeepResearchAgent.Engine.Services;
+using DeepResearchAgent.Infrastructure.Services.Planning;
 using DeepResearchAgent.Infrastructure.Persistence;
 using DeepResearchAgent.Infrastructure.Persistence.Repositories;
 using Microsoft.EntityFrameworkCore;
@@ -20,8 +21,8 @@ builder.Services.AddCors(options =>
 });
 
 builder.Services.AddScoped<IResearchRepository, ResearchRepository>();
-
 builder.Services.AddScoped<IResearchService, ResearchService>();
+builder.Services.AddScoped<IResearchPlanner, ResearchPlanner>();
 
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlServer(

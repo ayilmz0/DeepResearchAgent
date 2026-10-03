@@ -1,5 +1,6 @@
 using DeepResearchAgent.Engine.Interfaces;
 using DeepResearchAgent.Engine.Services;
+using DeepResearchAgent.Infrastructure.Services.Planning;
 using DeepResearchAgent.Infrastructure.Persistence;
 using DeepResearchAgent.Infrastructure.Persistence.Repositories;
 using DeepResearchAgent.Worker;
@@ -13,6 +14,7 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 
 builder.Services.AddScoped<IResearchRepository, ResearchRepository>();
 builder.Services.AddScoped<IResearchService, ResearchService>();
+builder.Services.AddScoped<IResearchPlanner, ResearchPlanner>();
 
 builder.Services.AddHostedService<Worker>();
 
