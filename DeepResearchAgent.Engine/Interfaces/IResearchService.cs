@@ -11,4 +11,7 @@ public interface IResearchService
     Task<GetResearchResponse?> GetResearchByIdAsync(
         Guid id,
         CancellationToken cancellationToken = default);
+
+    Task<bool> ProcessPendingResearchAsync(
+        CancellationToken cancellationToken = default);
 }
