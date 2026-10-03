@@ -19,7 +19,15 @@ public interface IResearchRepository
         IEnumerable<ResearchTask> tasks,
         CancellationToken cancellationToken = default);
 
+    Task<IReadOnlyList<ResearchTask>> GetPendingTasksAsync(
+        Guid researchId,
+        CancellationToken cancellationToken = default);
+
     Task UpdateAsync(
         Research research,
         CancellationToken cancellationToken = default);
+
+    Task AddSourcesAsync(
+    IEnumerable<Source> sources,
+    CancellationToken cancellationToken = default);
 }
