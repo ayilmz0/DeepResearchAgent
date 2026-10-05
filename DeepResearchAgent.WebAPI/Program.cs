@@ -1,14 +1,23 @@
 using DeepResearchAgent.Engine.Interfaces;
 using DeepResearchAgent.Engine.Services;
-using DeepResearchAgent.Infrastructure.Services.Planning;
 using DeepResearchAgent.Infrastructure.Persistence;
 using DeepResearchAgent.Infrastructure.Persistence.Repositories;
-using Microsoft.EntityFrameworkCore;
+using DeepResearchAgent.Infrastructure.Services.Crawling;
+using DeepResearchAgent.Infrastructure.Services.Planning;
 using DeepResearchAgent.Infrastructure.Services.Search;
+using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers();
+
+builder.Services.AddHttpClient<ICrawler, WebCrawler>(client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(15);
+
+    client.DefaultRequestHeaders.UserAgent.ParseAdd(
+        "DeepResearchAgent/1.0");
+});
 
 builder.Services.AddCors(options =>
 {

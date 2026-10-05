@@ -14,7 +14,8 @@ public class Source
 
     public DateTime? PublishedAt { get; set; }
 
-    public DateTime CrawledAt { get; set; }
+    public DateTime? CrawledAt { get; set; }
+    public bool CrawlSucceeded { get; set; }
 
     public int Depth { get; set; }
 

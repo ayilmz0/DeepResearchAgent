@@ -9,14 +9,15 @@ public class ResearchService : IResearchService
 {
     private readonly IResearchRepository _researchRepository;
     private readonly IResearchPlanner _researchPlanner;
-
     private readonly IResearchSearcher _researchSearcher;
+    private readonly ICrawler _crawler;
 
-    public ResearchService(IResearchRepository researchRepository, IResearchPlanner researchPlanner, IResearchSearcher researchSearcher)
+    public ResearchService(IResearchRepository researchRepository, IResearchPlanner researchPlanner, IResearchSearcher researchSearcher, ICrawler crawler)
     {
         _researchRepository = researchRepository;
         _researchPlanner = researchPlanner;
         _researchSearcher = researchSearcher;
+        _crawler = crawler;
     }
 
     public async Task<bool> ProcessPendingResearchAsync(
@@ -59,8 +60,9 @@ public class ResearchService : IResearchService
                     task.Query,
                     cancellationToken);
 
-            var sources = searchResults
-                .Select(result => new Source
+            foreach (var result in searchResults)
+            {
+                var source = new Source
                 {
                     Id = Guid.NewGuid(),
                     ResearchId = research.Id,
@@ -70,14 +72,32 @@ public class ResearchService : IResearchService
                     CrawledAt = DateTime.UtcNow,
                     Depth = task.Depth,
                     RelevanceScore = 0
-                })
-                .ToList();
+                };
 
-            await _researchRepository.AddSourcesAsync(
-                sources,
-                cancellationToken);
+                try
+                {
+                    var content = await _crawler.CrawlAsync(
+                        source.Url,
+                        cancellationToken);
 
-            task.Status = ResearchStatus.Completed;
+                    source.Content = content;
+                    source.CrawledAt = DateTime.UtcNow;
+                    source.CrawlSucceeded = true;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine(
+                        $"Crawler failed: {source.Url} - {ex.Message}");
+
+                    source.CrawlSucceeded = false;
+                }
+
+                await _researchRepository.AddSourcesAsync(
+                    new[] { source },
+                    cancellationToken);
+
+                task.Status = ResearchStatus.Completed;
+            }
         }
 
         await _researchRepository.UpdateAsync(
