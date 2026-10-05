@@ -20,6 +20,7 @@ public class GeminiClient : IAIClient
 
     public async Task<string> GenerateAsync(
         string prompt,
+        object? responseSchema = null,
         CancellationToken cancellationToken = default)
     {
         var apiKey = _configuration["Gemini:ApiKey"];
@@ -37,6 +38,17 @@ public class GeminiClient : IAIClient
         var url =
             $"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent";
 
+        var generationConfig = new Dictionary<string, object?>
+        {
+            ["responseMimeType"] = "application/json"
+        };
+
+        if (responseSchema is not null)
+        {
+            generationConfig["responseSchema"] =
+                responseSchema;
+        }
+
         var requestBody = new
         {
             contents = new[]
@@ -53,49 +65,11 @@ public class GeminiClient : IAIClient
                 }
             },
 
-            generationConfig = new
-            {
-                responseMimeType = "application/json",
-
-                responseSchema = new
-                {
-                    type = "ARRAY",
-
-                    items = new
-                    {
-                        type = "OBJECT",
-
-                        properties = new
-                        {
-                            claim = new
-                            {
-                                type = "STRING"
-                            },
-
-                            value = new
-                            {
-                                type = "STRING",
-                                nullable = true
-                            },
-
-                            confidence = new
-                            {
-                                type = "NUMBER"
-                            }
-                        },
-
-                        required = new[]
-                        {
-                            "claim",
-                            "value",
-                            "confidence"
-                        }
-                    }
-                }
-            }
+            generationConfig
         };
 
-        var json = JsonSerializer.Serialize(requestBody);
+        var json = JsonSerializer.Serialize(
+            requestBody);
 
         using var content = new StringContent(
             json,

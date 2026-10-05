@@ -7,6 +7,7 @@ using DeepResearchAgent.Infrastructure.Services.Analysis;
 using DeepResearchAgent.Infrastructure.Services.Crawling;
 using DeepResearchAgent.Infrastructure.Services.Planning;
 using DeepResearchAgent.Infrastructure.Services.Search;
+using DeepResearchAgent.Infrastructure.Services.Verification;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -19,13 +20,19 @@ builder.Services.AddScoped<
 
 builder.Services.AddHttpClient<IAIClient, GeminiClient>();
 
-builder.Services.AddHttpClient<ICrawler, WebCrawler>(client =>
-{
-    client.Timeout = TimeSpan.FromSeconds(15);
+builder.Services.AddScoped<IFactVerifier, FactVerifier>();
 
-    client.DefaultRequestHeaders.UserAgent.ParseAdd(
-        "DeepResearchAgent/1.0");
-});
+builder.Services.AddHttpClient<ICrawler, WebCrawler>(
+    client =>
+    {
+        client.Timeout = TimeSpan.FromSeconds(15);
+
+        client.DefaultRequestHeaders.UserAgent.ParseAdd(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+            "AppleWebKit/537.36 " +
+            "(KHTML, like Gecko) " +
+            "Chrome/154.0.0.0 Safari/537.36");
+    });
 
 builder.Services.AddCors(options =>
 {

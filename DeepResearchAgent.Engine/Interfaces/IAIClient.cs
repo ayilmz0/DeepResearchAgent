@@ -3,6 +3,7 @@
 public interface IAIClient
 {
     Task<string> GenerateAsync(
-        string prompt,
-        CancellationToken cancellationToken = default);
+       string prompt,
+       object? responseSchema = null,
+       CancellationToken cancellationToken = default);
 }

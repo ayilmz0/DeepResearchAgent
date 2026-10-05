@@ -14,6 +14,7 @@ public class ResearchRepository : IResearchRepository
         _context = context;
     }
 
+
     public async Task AddFactsAsync(
     IEnumerable<Fact> facts,
     CancellationToken cancellationToken = default)
@@ -21,6 +22,26 @@ public class ResearchRepository : IResearchRepository
         await _context.Facts.AddRangeAsync(
             facts,
             cancellationToken);
+
+        await _context.SaveChangesAsync(
+            cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<Fact>> GetFactsByResearchIdAsync(
+    Guid researchId,
+    CancellationToken cancellationToken = default)
+    {
+        return await _context.Facts
+            .Include(x => x.Source)
+            .Where(x => x.Source.ResearchId == researchId)
+            .ToListAsync(cancellationToken);
+    }
+
+    public async Task UpdateFactsAsync(
+    IEnumerable<Fact> facts,
+    CancellationToken cancellationToken = default)
+    {
+        _context.Facts.UpdateRange(facts);
 
         await _context.SaveChangesAsync(
             cancellationToken);

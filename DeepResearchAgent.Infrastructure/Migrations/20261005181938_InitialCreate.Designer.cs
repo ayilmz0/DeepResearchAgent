@@ -9,11 +9,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
 
-namespace DeepResearchAgent.Infrastructure.Persistence.Migrations
+namespace DeepResearchAgent.Infrastructure.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20261005163545_AddCrawlerStatus")]
-    partial class AddCrawlerStatus
+    [Migration("20261005181938_InitialCreate")]
+    partial class InitialCreate
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -65,11 +65,26 @@ namespace DeepResearchAgent.Infrastructure.Persistence.Migrations
                     b.Property<double>("Confidence")
                         .HasColumnType("float");
 
+                    b.Property<int>("ContradictingSourceCount")
+                        .HasColumnType("int");
+
                     b.Property<Guid>("SourceId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<int>("SupportingSourceCount")
+                        .HasColumnType("int");
+
                     b.Property<string>("Value")
                         .HasColumnType("nvarchar(max)");
+
+                    b.Property<double?>("VerificationConfidence")
+                        .HasColumnType("float");
+
+                    b.Property<string>("VerificationSummary")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTime?>("VerifiedAt")
+                        .HasColumnType("datetime2");
 
                     b.HasKey("Id");
 

@@ -3,7 +3,7 @@ using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
 
-namespace DeepResearchAgent.Infrastructure.Persistence.Migrations
+namespace DeepResearchAgent.Infrastructure.Migrations
 {
     /// <inheritdoc />
     public partial class InitialCreate : Migration
@@ -79,7 +79,8 @@ namespace DeepResearchAgent.Infrastructure.Persistence.Migrations
                     Title = table.Column<string>(type: "nvarchar(max)", nullable: true),
                     Content = table.Column<string>(type: "nvarchar(max)", nullable: true),
                     PublishedAt = table.Column<DateTime>(type: "datetime2", nullable: true),
-                    CrawledAt = table.Column<DateTime>(type: "datetime2", nullable: false),
+                    CrawledAt = table.Column<DateTime>(type: "datetime2", nullable: true),
+                    CrawlSucceeded = table.Column<bool>(type: "bit", nullable: false),
                     Depth = table.Column<int>(type: "int", nullable: false),
                     RelevanceScore = table.Column<double>(type: "float", nullable: false)
                 },
@@ -102,7 +103,12 @@ namespace DeepResearchAgent.Infrastructure.Persistence.Migrations
                     SourceId = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
                     Claim = table.Column<string>(type: "nvarchar(max)", nullable: false),
                     Value = table.Column<string>(type: "nvarchar(max)", nullable: true),
-                    Confidence = table.Column<double>(type: "float", nullable: false)
+                    Confidence = table.Column<double>(type: "float", nullable: false),
+                    VerificationConfidence = table.Column<double>(type: "float", nullable: true),
+                    SupportingSourceCount = table.Column<int>(type: "int", nullable: false),
+                    ContradictingSourceCount = table.Column<int>(type: "int", nullable: false),
+                    VerificationSummary = table.Column<string>(type: "nvarchar(max)", nullable: true),
+                    VerifiedAt = table.Column<DateTime>(type: "datetime2", nullable: true)
                 },
                 constraints: table =>
                 {
