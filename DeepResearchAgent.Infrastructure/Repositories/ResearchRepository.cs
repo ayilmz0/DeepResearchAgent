@@ -14,6 +14,18 @@ public class ResearchRepository : IResearchRepository
         _context = context;
     }
 
+    public async Task AddFactsAsync(
+    IEnumerable<Fact> facts,
+    CancellationToken cancellationToken = default)
+    {
+        await _context.Facts.AddRangeAsync(
+            facts,
+            cancellationToken);
+
+        await _context.SaveChangesAsync(
+            cancellationToken);
+    }
+
     public async Task AddSourcesAsync(
     IEnumerable<Source> sources,
     CancellationToken cancellationToken = default)

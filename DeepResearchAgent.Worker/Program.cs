@@ -2,6 +2,8 @@ using DeepResearchAgent.Engine.Interfaces;
 using DeepResearchAgent.Engine.Services;
 using DeepResearchAgent.Infrastructure.Persistence;
 using DeepResearchAgent.Infrastructure.Persistence.Repositories;
+using DeepResearchAgent.Infrastructure.Services.AI;
+using DeepResearchAgent.Infrastructure.Services.Analysis;
 using DeepResearchAgent.Infrastructure.Services.Crawling;
 using DeepResearchAgent.Infrastructure.Services.Planning;
 using DeepResearchAgent.Infrastructure.Services.Search;
@@ -9,6 +11,12 @@ using DeepResearchAgent.Worker;
 using Microsoft.EntityFrameworkCore;
 
 var builder = Host.CreateApplicationBuilder(args);
+
+builder.Services.AddScoped<
+    IResearchAnalyzer,
+    ResearchAnalyzer>();
+
+builder.Services.AddHttpClient<IAIClient, GeminiClient>();
 
 builder.Services.AddHttpClient<ICrawler, WebCrawler>(client =>
 {

@@ -11,13 +11,18 @@ public class ResearchService : IResearchService
     private readonly IResearchPlanner _researchPlanner;
     private readonly IResearchSearcher _researchSearcher;
     private readonly ICrawler _crawler;
-
-    public ResearchService(IResearchRepository researchRepository, IResearchPlanner researchPlanner, IResearchSearcher researchSearcher, ICrawler crawler)
+    private readonly IResearchAnalyzer _researchAnalyzer;
+    public ResearchService(IResearchRepository researchRepository,
+        IResearchPlanner researchPlanner,
+        IResearchSearcher researchSearcher,
+        ICrawler crawler,
+        IResearchAnalyzer researchAnalyzer)
     {
         _researchRepository = researchRepository;
         _researchPlanner = researchPlanner;
         _researchSearcher = researchSearcher;
         _crawler = crawler;
+        _researchAnalyzer = researchAnalyzer;
     }
 
     public async Task<bool> ProcessPendingResearchAsync(
@@ -93,11 +98,19 @@ public class ResearchService : IResearchService
                 }
 
                 await _researchRepository.AddSourcesAsync(
-                    new[] { source },
+        new[] { source },
+        cancellationToken);
+
+                var facts = await _researchAnalyzer.AnalyzeAsync(
+                    source,
                     cancellationToken);
 
-                task.Status = ResearchStatus.Completed;
+                await _researchRepository.AddFactsAsync(
+                    facts,
+                    cancellationToken);
             }
+
+            task.Status = ResearchStatus.Completed;
         }
 
         await _researchRepository.UpdateAsync(
