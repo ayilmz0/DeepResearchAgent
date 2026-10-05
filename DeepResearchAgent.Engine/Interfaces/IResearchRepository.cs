@@ -4,6 +4,10 @@ namespace DeepResearchAgent.Engine.Interfaces;
 
 public interface IResearchRepository
 {
+    Task AddFactsAsync(
+    IEnumerable<Fact> facts,
+    CancellationToken cancellationToken = default);
+
     Task AddAsync(
         Research research,
         CancellationToken cancellationToken = default);
