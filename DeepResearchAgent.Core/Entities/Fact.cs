@@ -10,9 +10,24 @@ public class Fact
 
     public string? Value { get; set; }
 
+    // Gemini'nin extraction confidence değeri
     public double Confidence { get; set; }
+
+    // Diğer kaynaklarla doğrulandıktan sonraki güven skoru
+    public double? VerificationConfidence { get; set; }
+
+    // Fact'i destekleyen kaynak sayısı
+    public int SupportingSourceCount { get; set; }
+
+    // Fact ile çelişen kaynak sayısı
+    public int ContradictingSourceCount { get; set; }
+
+    public string? VerificationSummary { get; set; }
+
+    public DateTime? VerifiedAt { get; set; }
 
     public Source Source { get; set; } = null!;
 
-    public ICollection<Citation> Citations { get; set; } = new List<Citation>();
+    public ICollection<Citation> Citations { get; set; }
+        = new List<Citation>();
 }

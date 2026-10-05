@@ -4,10 +4,6 @@ namespace DeepResearchAgent.Engine.Interfaces;
 
 public interface IResearchRepository
 {
-    Task AddFactsAsync(
-    IEnumerable<Fact> facts,
-    CancellationToken cancellationToken = default);
-
     Task AddAsync(
         Research research,
         CancellationToken cancellationToken = default);
@@ -27,11 +23,23 @@ public interface IResearchRepository
         Guid researchId,
         CancellationToken cancellationToken = default);
 
+    Task AddSourcesAsync(
+        IEnumerable<Source> sources,
+        CancellationToken cancellationToken = default);
+
+    Task AddFactsAsync(
+        IEnumerable<Fact> facts,
+        CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<Fact>> GetFactsByResearchIdAsync(
+        Guid researchId,
+        CancellationToken cancellationToken = default);
+
+    Task UpdateFactsAsync(
+        IEnumerable<Fact> facts,
+        CancellationToken cancellationToken = default);
+
     Task UpdateAsync(
         Research research,
         CancellationToken cancellationToken = default);
-
-    Task AddSourcesAsync(
-    IEnumerable<Source> sources,
-    CancellationToken cancellationToken = default);
 }

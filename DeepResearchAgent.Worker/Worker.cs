@@ -18,20 +18,33 @@ public class Worker : BackgroundService
     protected override async Task ExecuteAsync(
         CancellationToken stoppingToken)
     {
-        _logger.LogInformation("Research Worker started.");
+        _logger.LogInformation(
+            "======================================");
+
+        _logger.LogInformation(
+            "Research Worker started.");
+
+        _logger.LogInformation(
+            "======================================");
 
         while (!stoppingToken.IsCancellationRequested)
         {
-            using var scope = _serviceProvider.CreateScope();
-
-            var researchService =
-                scope.ServiceProvider.GetRequiredService<IResearchService>();
-
             try
             {
+                using var scope =
+                    _serviceProvider.CreateScope();
+
+                var researchService =
+                    scope.ServiceProvider
+                        .GetRequiredService<IResearchService>();
+
+                _logger.LogInformation(
+                    "Pending research kontrol ediliyor...");
+
                 var processed =
-                    await researchService.ProcessPendingResearchAsync(
-                        stoppingToken);
+                    await researchService
+                        .ProcessPendingResearchAsync(
+                            stoppingToken);
 
                 if (processed)
                 {
@@ -44,12 +57,24 @@ public class Worker : BackgroundService
                         "No pending research found.");
                 }
             }
+            catch (OperationCanceledException)
+                when (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
             catch (Exception ex)
             {
                 _logger.LogError(
                     ex,
-                    "ProcessPendingResearchAsync hata verdi.");
+                    "Worker sırasında hata oluştu.");
             }
+
+            await Task.Delay(
+                TimeSpan.FromSeconds(5),
+                stoppingToken);
         }
+
+        _logger.LogInformation(
+            "Research Worker stopped.");
     }
 }

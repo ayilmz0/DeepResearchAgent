@@ -46,13 +46,47 @@ public class ResearchAnalyzer : IResearchAnalyzer
             {source.Content}
             """;
 
-        var response = await _aiClient.GenerateAsync(
-            prompt,
-            cancellationToken);
+        var responseSchema = new
+        {
+            type = "ARRAY",
 
-        Console.WriteLine("===== GEMINI RESPONSE =====");
-        Console.WriteLine(response);
-        Console.WriteLine("===========================");
+            items = new
+            {
+                type = "OBJECT",
+
+                properties = new
+                {
+                    claim = new
+                    {
+                        type = "STRING"
+                    },
+
+                    value = new
+                    {
+                        type = "STRING",
+                        nullable = true
+                    },
+
+                    confidence = new
+                    {
+                        type = "NUMBER"
+                    }
+                },
+
+                required = new[]
+                {
+                    "claim",
+                    "value",
+                    "confidence"
+                }
+            }
+        };
+
+        var response =
+            await _aiClient.GenerateAsync(
+                prompt,
+                responseSchema,
+                cancellationToken);
 
         var extractedFacts =
             JsonSerializer.Deserialize<List<ExtractedFactDto>>(

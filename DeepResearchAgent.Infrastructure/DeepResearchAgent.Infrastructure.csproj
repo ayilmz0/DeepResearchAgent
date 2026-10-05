@@ -21,4 +21,8 @@
     <ProjectReference Include="..\DeepResearchAgent.Engine\DeepResearchAgent.Engine.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Folder Include="Migrations\" />
+  </ItemGroup>
+
 </Project>
