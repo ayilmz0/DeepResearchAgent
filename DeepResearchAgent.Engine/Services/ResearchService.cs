@@ -98,9 +98,9 @@ public class ResearchService : IResearchService
 
         try
         {
-            // ==========================================
+            // =====================================================
             // 1. PLANNING
-            // ==========================================
+            // =====================================================
 
             Console.WriteLine();
             Console.WriteLine("======================================");
@@ -116,7 +116,8 @@ public class ResearchService : IResearchService
                 research,
                 cancellationToken);
 
-            Console.WriteLine("Research Planner çalışıyor...");
+            Console.WriteLine(
+                "Research Planner çalışıyor...");
 
             var tasks =
                 await _researchPlanner.CreatePlanAsync(
@@ -130,9 +131,9 @@ public class ResearchService : IResearchService
                 tasks,
                 cancellationToken);
 
-            // ==========================================
+            // =====================================================
             // 2. SEARCHING
-            // ==========================================
+            // =====================================================
 
             research.Status = ResearchStatus.Searching;
 
@@ -173,9 +174,9 @@ public class ResearchService : IResearchService
                 Console.WriteLine(
                     $"Tavily {searchResults.Count} sonuç döndürdü.");
 
-                // ==========================================
+                // =================================================
                 // 3. CRAWLING
-                // ==========================================
+                // =================================================
 
                 research.Status = ResearchStatus.Crawling;
 
@@ -286,9 +287,9 @@ public class ResearchService : IResearchService
                         $"{sources.Count} source database'e kaydedildi.");
                 }
 
-                // ==========================================
+                // =================================================
                 // 4. ANALYZING
-                // ==========================================
+                // =================================================
 
                 research.Status = ResearchStatus.Analyzing;
 
@@ -301,35 +302,38 @@ public class ResearchService : IResearchService
                 Console.WriteLine("ANALYZING");
                 Console.WriteLine("======================================");
 
-                foreach (var source in sources)
+                // Sadece başarılı crawl edilen ve içeriği olan
+                // source'lar analiz edilecek.
+                //
+                // Şimdilik Gemini quota'sını korumak için
+                // research başına maksimum 5 source analiz ediyoruz.
+
+                var analyzableSources = sources
+                    .Where(x => x.CrawlSucceeded)
+                    .Where(x => !string.IsNullOrWhiteSpace(x.Content))
+                    .Take(5)
+                    .ToList();
+
+                Console.WriteLine(
+                    $"Analiz edilecek source sayısı: " +
+                    $"{analyzableSources.Count}");
+
+                foreach (var source in analyzableSources)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
 
-                    // Crawl başarısızsa analiz etme.
-                    if (!source.CrawlSucceeded)
-                    {
-                        Console.WriteLine(
-                            $"Crawl başarısız, analiz atlanıyor: {source.Url}");
-
-                        continue;
-                    }
-
-                    if (string.IsNullOrWhiteSpace(source.Content))
-                    {
-                        Console.WriteLine(
-                            $"Source içeriği boş, analiz atlanıyor: {source.Url}");
-
-                        continue;
-                    }
-
                     Console.WriteLine();
-                    Console.WriteLine(
-                        $"Source analiz ediliyor: {source.Url}");
+                    Console.WriteLine("--------------------------------------");
+                    Console.WriteLine("SOURCE ANALYSIS");
+                    Console.WriteLine($"URL: {source.Url}");
+                    Console.WriteLine($"Title: {source.Title}");
+                    Console.WriteLine("--------------------------------------");
 
                     try
                     {
                         var facts =
                             await _researchAnalyzer.AnalyzeAsync(
+                                research,
                                 source,
                                 cancellationToken);
 
@@ -338,6 +342,9 @@ public class ResearchService : IResearchService
 
                         if (facts.Count == 0)
                         {
+                            Console.WriteLine(
+                                "Bu source için ilgili fact bulunamadı.");
+
                             continue;
                         }
 
@@ -368,8 +375,8 @@ public class ResearchService : IResearchService
                 // Task tamamlandı.
                 task.Status = ResearchStatus.Completed;
 
-                await _researchRepository.UpdateAsync(
-                    research,
+                await _researchRepository.UpdateTaskAsync(
+                    task,
                     cancellationToken);
 
                 Console.WriteLine();
@@ -377,9 +384,9 @@ public class ResearchService : IResearchService
                     $"Task tamamlandı: {task.Id}");
             }
 
-            // ==========================================
+            // =====================================================
             // 5. VERIFICATION
-            // ==========================================
+            // =====================================================
 
             research.Status = ResearchStatus.Verifying;
 
@@ -398,7 +405,8 @@ public class ResearchService : IResearchService
                     cancellationToken);
 
             Console.WriteLine(
-                $"Verification yapılacak Fact sayısı: {allFacts.Count}");
+                $"Verification yapılacak Fact sayısı: " +
+                $"{allFacts.Count}");
 
             foreach (var fact in allFacts)
             {
@@ -434,6 +442,9 @@ public class ResearchService : IResearchService
                         $"Contradicting Sources: " +
                         $"{verification.ContradictingSourceCount}");
 
+                    fact.VerificationStatus =
+                        verification.Status;
+
                     fact.VerificationConfidence =
                         verification.VerificationConfidence;
 
@@ -446,7 +457,8 @@ public class ResearchService : IResearchService
                     fact.VerificationSummary =
                         verification.Summary;
 
-                    fact.VerifiedAt = DateTime.UtcNow;
+                    fact.VerifiedAt =
+                        DateTime.UtcNow;
                 }
                 catch (Exception ex)
                 {
@@ -468,9 +480,9 @@ public class ResearchService : IResearchService
                 }
             }
 
-            // ==========================================
+            // =====================================================
             // 6. SAVE VERIFICATION RESULTS
-            // ==========================================
+            // =====================================================
 
             if (allFacts.Count > 0)
             {
@@ -483,9 +495,9 @@ public class ResearchService : IResearchService
                     "Verification sonuçları database'e kaydedildi.");
             }
 
-            // ==========================================
+            // =====================================================
             // 7. COMPLETED
-            // ==========================================
+            // =====================================================
 
             research.Status = ResearchStatus.Completed;
             research.CompletedAt = DateTime.UtcNow;
@@ -510,9 +522,18 @@ public class ResearchService : IResearchService
         {
             research.Status = ResearchStatus.Failed;
 
-            await _researchRepository.UpdateAsync(
-                research,
-                cancellationToken);
+            try
+            {
+                await _researchRepository.UpdateAsync(
+                    research,
+                    cancellationToken);
+            }
+            catch
+            {
+                // Ana hata zaten mevcut.
+                // Status update başarısız olursa
+                // ikinci bir exception ile asıl hatayı gizlemiyoruz.
+            }
 
             Console.WriteLine();
             Console.WriteLine("======================================");

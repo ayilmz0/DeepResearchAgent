@@ -1,5 +1,6 @@
 using DeepResearchAgent.Engine.Interfaces;
 using DeepResearchAgent.Engine.Services;
+using DeepResearchAgent.Engine.Services.Analysis;
 using DeepResearchAgent.Infrastructure.Persistence;
 using DeepResearchAgent.Infrastructure.Persistence.Repositories;
 using DeepResearchAgent.Infrastructure.Services.AI;
@@ -21,6 +22,8 @@ builder.Services.AddScoped<
 builder.Services.AddHttpClient<IAIClient, GeminiClient>();
 
 builder.Services.AddScoped<IFactVerifier, FactVerifier>();
+
+builder.Services.AddScoped<IFactRelevanceAnalyzer, FactRelevanceAnalyzer>();
 
 builder.Services.AddHttpClient<ICrawler, WebCrawler>(
     client =>

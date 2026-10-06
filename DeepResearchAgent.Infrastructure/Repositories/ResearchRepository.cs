@@ -14,7 +14,6 @@ public class ResearchRepository : IResearchRepository
         _context = context;
     }
 
-
     public async Task AddFactsAsync(
     IEnumerable<Fact> facts,
     CancellationToken cancellationToken = default)
@@ -98,6 +97,16 @@ public class ResearchRepository : IResearchRepository
     public async Task UpdateAsync(Research research, CancellationToken cancellationToken = default)
     {
         await _context.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task UpdateTaskAsync(
+    ResearchTask task,
+    CancellationToken cancellationToken = default)
+    {
+        _context.ResearchTasks.Update(task);
+
+        await _context.SaveChangesAsync(
+            cancellationToken);
     }
 
     public async Task AddTasksAsync(IEnumerable<ResearchTask> tasks, CancellationToken cancellationToken = default)

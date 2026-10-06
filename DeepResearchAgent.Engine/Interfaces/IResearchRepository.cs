@@ -39,6 +39,10 @@ public interface IResearchRepository
         IEnumerable<Fact> facts,
         CancellationToken cancellationToken = default);
 
+    Task UpdateTaskAsync(
+    ResearchTask task,
+    CancellationToken cancellationToken = default);
+
     Task UpdateAsync(
         Research research,
         CancellationToken cancellationToken = default);
