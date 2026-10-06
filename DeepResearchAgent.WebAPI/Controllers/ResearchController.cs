@@ -15,6 +15,20 @@ public class ResearchController : ControllerBase
         _researchService = researchService;
     }
 
+    [HttpGet("{id:guid}/report")]
+    public async Task<ActionResult<GetReportResponse>> GetReport(
+        Guid id,
+        CancellationToken cancellationToken)
+    {
+        var result = await _researchService.GetReportByResearchIdAsync(
+            id, cancellationToken);
+        if (result is null)
+        {
+            return NotFound();
+        }
+        return Ok(result);
+    }
+
     [HttpPost]
     public async Task<ActionResult<CreateResearchResponse>> Create(
         [FromBody] CreateResearchRequest request,

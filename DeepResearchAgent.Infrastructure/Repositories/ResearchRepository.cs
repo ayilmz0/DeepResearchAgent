@@ -14,6 +14,15 @@ public class ResearchRepository : IResearchRepository
         _context = context;
     }
 
+    public async Task<Report?> GetReportByResearchIdAsync(
+        Guid researchId,
+        CancellationToken cancellationToken = default)
+    {
+        return await _context.Reports.FirstOrDefaultAsync(
+            x => x.ResearchId == researchId,
+            cancellationToken);
+    }
+
     public async Task AddFactsAsync(
     IEnumerable<Fact> facts,
     CancellationToken cancellationToken = default)
