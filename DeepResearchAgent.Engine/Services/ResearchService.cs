@@ -13,6 +13,8 @@ public class ResearchService : IResearchService
     private readonly ICrawler _crawler;
     private readonly IResearchAnalyzer _researchAnalyzer;
     private readonly IFactVerifier _factVerifier;
+    private readonly IResearchRepository _repository;
+
 
     public ResearchService(
         IResearchRepository researchRepository,
@@ -20,7 +22,8 @@ public class ResearchService : IResearchService
         IResearchSearcher researchSearcher,
         ICrawler crawler,
         IResearchAnalyzer researchAnalyzer,
-        IFactVerifier factVerifier)
+        IFactVerifier factVerifier,
+        IResearchRepository repository)
     {
         _researchRepository = researchRepository;
         _researchPlanner = researchPlanner;
@@ -28,6 +31,25 @@ public class ResearchService : IResearchService
         _crawler = crawler;
         _researchAnalyzer = researchAnalyzer;
         _factVerifier = factVerifier;
+        _repository = repository;
+    }
+
+    public async Task<GetReportResponse?> GetReportByResearchIdAsync
+        (Guid researchId,
+        CancellationToken cancellationToken = default)
+    { 
+        var report = await _repository.GetReportByResearchIdAsync(
+            researchId, cancellationToken);
+        if (report is null)
+        {
+            return null; 
+        } return new GetReportResponse {
+            Id = report.Id,
+            ResearchId = report.ResearchId,
+            Title = report.Title,
+            Content = report.Content,
+            CreatedAt = report.CreatedAt
+        };
     }
 
     public async Task<CreateResearchResponse> CreateResearchAsync(
