@@ -1,11 +1,12 @@
 ﻿using DeepResearchAgent.Core.Entities;
+using DeepResearchAgent.Engine.DTOs;
 
 namespace DeepResearchAgent.Engine.Interfaces;
 
-public interface IResearchAnalyzer
+public interface IFactRelevanceAnalyzer
 {
-    Task<IReadOnlyList<Fact>> AnalyzeAsync(
+    Task<FactRelevanceResultDto> AnalyzeAsync(
         Research research,
-        Source source,
+        Fact fact,
         CancellationToken cancellationToken = default);
 }

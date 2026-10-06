@@ -1,4 +1,6 @@
-﻿namespace DeepResearchAgent.Core.Entities;
+﻿using DeepResearchAgent.Core.Enums;
+
+namespace DeepResearchAgent.Core.Entities;
 
 public class Fact
 {
@@ -10,16 +12,16 @@ public class Fact
 
     public string? Value { get; set; }
 
-    // Gemini'nin extraction confidence değeri
+    // Gemini extraction confidence
     public double Confidence { get; set; }
 
-    // Diğer kaynaklarla doğrulandıktan sonraki güven skoru
+    // Cross-source verification
+    public FactVerificationStatus? VerificationStatus { get; set; }
+
     public double? VerificationConfidence { get; set; }
 
-    // Fact'i destekleyen kaynak sayısı
     public int SupportingSourceCount { get; set; }
 
-    // Fact ile çelişen kaynak sayısı
     public int ContradictingSourceCount { get; set; }
 
     public string? VerificationSummary { get; set; }
