@@ -9,4 +9,9 @@ public interface IFactVerifier
         Fact fact,
         IReadOnlyList<Fact> relatedFacts,
         CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<BatchFactVerificationResultDto>> VerifyBatchAsync(
+        IReadOnlyList<Fact> facts,
+        IReadOnlyList<Fact> allFacts,
+        CancellationToken cancellationToken = default);
 }

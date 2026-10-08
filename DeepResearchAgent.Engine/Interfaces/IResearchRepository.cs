@@ -50,4 +50,8 @@ public interface IResearchRepository
     Task<Report?> GetReportByResearchIdAsync(
         Guid researchId,
         CancellationToken cancellationToken = default);
+
+    Task AddReportAsync(
+    Report report,
+    CancellationToken cancellationToken = default);
 }

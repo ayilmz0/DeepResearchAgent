@@ -1,7 +1,7 @@
-﻿using DeepResearchAgent.Core.Entities;
+﻿using System.Text.Json;
+using DeepResearchAgent.Core.Entities;
 using DeepResearchAgent.Engine.DTOs;
 using DeepResearchAgent.Engine.Interfaces;
-using System.Text.Json;
 
 namespace DeepResearchAgent.Infrastructure.Services.Analysis;
 
@@ -10,7 +10,9 @@ public class ResearchAnalyzer : IResearchAnalyzer
     private readonly IAIClient _aiClient;
     private readonly IFactRelevanceAnalyzer _factRelevanceAnalyzer;
 
-    public ResearchAnalyzer(IAIClient aiClient, IFactRelevanceAnalyzer factRelevanceAnalyzer)
+    public ResearchAnalyzer(
+        IAIClient aiClient,
+        IFactRelevanceAnalyzer factRelevanceAnalyzer)
     {
         _aiClient = aiClient;
         _factRelevanceAnalyzer = factRelevanceAnalyzer;
@@ -26,11 +28,11 @@ public class ResearchAnalyzer : IResearchAnalyzer
             return [];
         }
 
-        var prompt = $"""
+        var prompt =
+    $"""
     You are a factual information extraction system.
 
-    Your task is to extract only factual claims
-    that are directly relevant to the research topic.
+    Your task is to extract concrete factual claims from the source.
 
     Research topic:
     {research.Query}
@@ -44,68 +46,96 @@ public class ResearchAnalyzer : IResearchAnalyzer
     Source content:
     {source.Content}
 
-    Rules:
+    EXTRACTION RULES:
 
-    - Extract only facts directly relevant to the research topic.
-    - Ignore unrelated information from the source.
-    - Do not extract author names unless the author is relevant
-      to the research topic.
-    - Do not extract publication dates unless they are relevant
-      to the research topic.
-    - Do not extract generic definitions unless they directly
-      contribute to answering the research topic.
+    - Extract concrete factual claims stated in the source.
+    - Extract statistics, measurements, percentages, dates,
+      trends, findings, reported effects, relationships and
+      important statements.
+    - Extract claims that may potentially contribute to the
+      research topic.
+    - Do not require the fact to directly answer the entire
+      research question.
+    - Do not perform relevance filtering.
+    - Do not decide whether the fact is useful for the final report.
+    - That decision will be performed by a separate relevance
+      analysis stage.
     - Do not invent information.
     - Do not make assumptions.
     - Every claim must be explicitly supported by the source.
-    - Prefer important facts, statistics, findings and concrete
-      statements.
+    - Do not generate information that is not present in the source.
     - Avoid duplicate or nearly identical claims.
+    - Do not extract navigation menus, advertisements or UI text.
+    - Do not extract author names unless they are part of a
+      meaningful factual claim.
+    - Do not extract generic definitions unless the definition
+      itself contains meaningful factual information.
+    - Prefer specific and verifiable statements over vague statements.
     - Extract at most 8 facts from this source.
     - Confidence must be between 0.0 and 1.0.
-    - If the source contains no relevant facts, return an empty array.
+    - If the source contains no concrete factual claims,
+      return an empty array.
+
+    IMPORTANT:
+
+    Even if a fact is only potentially related to the research topic,
+    extract it if it is a concrete factual claim.
+
+    The next pipeline stage will determine whether the fact is
+    actually relevant to the research topic.
+
+    Return ONLY the structured JSON array.
     """;
 
-        var responseSchema = new
-        {
-            type = "ARRAY",
-
-            items = new
+        var responseSchema =
+            new
             {
-                type = "OBJECT",
-
-                properties = new
+                type = "ARRAY",
+                items = new
                 {
-                    claim = new
+                    type = "OBJECT",
+                    properties = new
                     {
-                        type = "STRING"
-                    },
+                        claim =
+                            new
+                            {
+                                type = "STRING"
+                            },
 
-                    value = new
-                    {
-                        type = "STRING",
-                        nullable = true
-                    },
+                        value =
+                            new
+                            {
+                                type = "STRING",
+                                nullable = true
+                            },
 
-                    confidence = new
+                        confidence =
+                            new
+                            {
+                                type = "NUMBER"
+                            }
+                    },
+                    required = new[]
                     {
-                        type = "NUMBER"
+                        "claim",
+                        "value",
+                        "confidence"
                     }
-                },
-
-                required = new[]
-                {
-                    "claim",
-                    "value",
-                    "confidence"
                 }
-            }
-        };
+            };
 
         var response =
             await _aiClient.GenerateAsync(
                 prompt,
                 responseSchema,
                 cancellationToken);
+
+        Console.WriteLine();
+        Console.WriteLine("======================================");
+        Console.WriteLine("GEMINI FACT EXTRACTION RESPONSE");
+        Console.WriteLine("======================================");
+        Console.WriteLine(response);
+        Console.WriteLine("======================================");
 
         var extractedFacts =
             JsonSerializer.Deserialize<List<ExtractedFactDto>>(
@@ -120,43 +150,120 @@ public class ResearchAnalyzer : IResearchAnalyzer
             return [];
         }
 
-        var facts = extractedFacts
-            .Where(x => !string.IsNullOrWhiteSpace(x.Claim))
-            .Select(x => new Fact
-            {
-                Id = Guid.NewGuid(),
-                SourceId = source.Id,
-                Claim = x.Claim,
-                Value = x.Value,
-                Confidence = Math.Clamp(
-                    x.Confidence,
-                    0.0,
-                    1.0)
-            })
-            .ToList();
+        var facts =
+            extractedFacts
+                .Where(x =>
+                    !string.IsNullOrWhiteSpace(x.Claim))
+                .Select(x =>
+                    new Fact
+                    {
+                        Id = Guid.NewGuid(),
+                        SourceId = source.Id,
+                        Claim = x.Claim.Trim(),
+                        Value = x.Value,
+                        Confidence =
+                            Math.Clamp(
+                                x.Confidence,
+                                0.0,
+                                1.0)
+                    })
+                .ToList();
 
-        var relevantFacts = new List<Fact>();
+        if (facts.Count == 0)
+        {
+            return [];
+        }
+
+        Console.WriteLine();
+        Console.WriteLine(
+            "======================================");
+        Console.WriteLine(
+            "FACT RELEVANCE BATCH ANALYSIS");
+        Console.WriteLine(
+            "======================================");
+
+        Console.WriteLine(
+            $"Extracted facts: {facts.Count}");
+
+        IReadOnlyList<BatchFactRelevanceResultDto>
+            relevanceResults;
+
+        try
+        {
+            relevanceResults =
+                await _factRelevanceAnalyzer.AnalyzeBatchAsync(
+                    research,
+                    facts,
+                    cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine();
+            Console.WriteLine(
+                "Fact relevance batch analysis başarısız.");
+
+            Console.WriteLine(
+                $"Hata: {ex.Message}");
+
+            return [];
+        }
+
+        var relevanceDictionary =
+            relevanceResults
+                .GroupBy(x => x.FactId)
+                .ToDictionary(
+                    x => x.Key,
+                    x => x.First());
+
+        var relevantFacts =
+            new List<Fact>();
 
         foreach (var fact in facts)
         {
-            var relevance =
-                await _factRelevanceAnalyzer.AnalyzeAsync(
-                    research,
-                    fact,
-                    cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (!relevanceDictionary.TryGetValue(
+                    fact.Id,
+                    out var relevance))
+            {
+                Console.WriteLine();
+                Console.WriteLine(
+                    $"Fact relevance sonucu bulunamadı: " +
+                    $"{fact.Id}");
+
+                continue;
+            }
 
             Console.WriteLine();
-            Console.WriteLine("===== FACT RELEVANCE =====");
-            Console.WriteLine($"Fact: {fact.Claim}");
-            Console.WriteLine($"Relevant: {relevance.IsRelevant}");
-            Console.WriteLine($"Confidence: {relevance.Confidence}");
-            Console.WriteLine($"Reason: {relevance.Reason}");
+            Console.WriteLine(
+                "===== FACT RELEVANCE =====");
+
+            Console.WriteLine(
+                $"Fact: {fact.Claim}");
+
+            Console.WriteLine(
+                $"Relevant: {relevance.IsRelevant}");
+
+            Console.WriteLine(
+                $"Confidence: {relevance.Confidence}");
+
+            Console.WriteLine(
+                $"Reason: {relevance.Reason}");
 
             if (relevance.IsRelevant)
             {
                 relevantFacts.Add(fact);
             }
         }
+
+        Console.WriteLine();
+        Console.WriteLine(
+            $"Relevant facts from source: " +
+            $"{relevantFacts.Count}");
 
         return relevantFacts;
     }

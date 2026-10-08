@@ -1,5 +1,6 @@
 ﻿using DeepResearchAgent.Engine.Interfaces;
 using Microsoft.Extensions.Configuration;
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 
@@ -154,15 +155,7 @@ public class GeminiClient : IAIClient
                     $"Response: {responseBody}");
 
                 // Günlük quota bittiyse retry yapmak anlamsız.
-                if (responseBody.Contains(
-                        "PerDay",
-                        StringComparison.OrdinalIgnoreCase) ||
-                    responseBody.Contains(
-                        "daily",
-                        StringComparison.OrdinalIgnoreCase) ||
-                    responseBody.Contains(
-                        "quota exceeded",
-                        StringComparison.OrdinalIgnoreCase))
+                if (IsDailyQuotaExceeded(responseBody))
                 {
                     throw new HttpRequestException(
                         $"Gemini günlük quota aşıldı. " +
@@ -172,12 +165,13 @@ public class GeminiClient : IAIClient
                 if (attempt <= MaxRetries)
                 {
                     var delay =
-                        TimeSpan.FromSeconds(
-                            10 * attempt);
+                        GetRetryDelay(
+                            responseBody,
+                            attempt);
 
                     Console.WriteLine(
                         $"Geçici rate limit. " +
-                        $"{delay.TotalSeconds} saniye beklenecek.");
+                        $"{delay.TotalSeconds:F1} saniye beklenecek.");
 
                     await Task.Delay(
                         delay,
@@ -201,17 +195,18 @@ public class GeminiClient : IAIClient
                     "Gemini 503 ServiceUnavailable döndürdü.");
 
                 Console.WriteLine(
-                    "Model şu anda yoğun olabilir.");
+                    $"Response: {responseBody}");
 
                 if (attempt <= MaxRetries)
                 {
                     var delay =
-                        TimeSpan.FromSeconds(
-                            10 * attempt);
+                        GetRetryDelay(
+                            responseBody,
+                            attempt);
 
                     Console.WriteLine(
                         $"503 retry için " +
-                        $"{delay.TotalSeconds} saniye beklenecek.");
+                        $"{delay.TotalSeconds:F1} saniye beklenecek.");
 
                     await Task.Delay(
                         delay,
@@ -243,5 +238,102 @@ public class GeminiClient : IAIClient
 
         throw new InvalidOperationException(
             "Gemini request beklenmeyen şekilde sona erdi.");
+    }
+
+    // =============================================================
+    // DAILY QUOTA CONTROL
+    // =============================================================
+
+    private static bool IsDailyQuotaExceeded(
+        string responseBody)
+    {
+        return
+            responseBody.Contains(
+                "PerDay",
+                StringComparison.OrdinalIgnoreCase)
+            ||
+            responseBody.Contains(
+                "daily",
+                StringComparison.OrdinalIgnoreCase)
+            ||
+            responseBody.Contains(
+                "quota exceeded",
+                StringComparison.OrdinalIgnoreCase);
+    }
+
+    // =============================================================
+    // RETRY DELAY
+    // =============================================================
+
+    private static TimeSpan GetRetryDelay(
+        string responseBody,
+        int attempt)
+    {
+        try
+        {
+            using var document =
+                JsonDocument.Parse(responseBody);
+
+            if (document.RootElement.TryGetProperty(
+                    "error",
+                    out var error) &&
+                error.TryGetProperty(
+                    "details",
+                    out var details) &&
+                details.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var detail in details.EnumerateArray())
+                {
+                    if (!detail.TryGetProperty(
+                            "retryDelay",
+                            out var retryDelayElement))
+                    {
+                        continue;
+                    }
+
+                    var retryDelay =
+                        retryDelayElement.GetString();
+
+                    if (string.IsNullOrWhiteSpace(
+                            retryDelay))
+                    {
+                        continue;
+                    }
+
+                    if (retryDelay.EndsWith("s") &&
+                        double.TryParse(
+                            retryDelay[..^1],
+                            NumberStyles.Float,
+                            CultureInfo.InvariantCulture,
+                            out var seconds))
+                    {
+                        // Gemini örneğin 10s diyorsa
+                        // 11 saniye bekle.
+                        return TimeSpan.FromSeconds(
+                            seconds + 1);
+                    }
+                }
+            }
+        }
+        catch (JsonException)
+        {
+            Console.WriteLine(
+                "Gemini retry response JSON olarak parse edilemedi.");
+        }
+
+        // Gemini retryDelay göndermediyse
+        // exponential backoff kullanıyoruz.
+        //
+        // attempt = 1 -> 4 saniye
+        // attempt = 2 -> 8 saniye
+        //
+        // Maksimum 30 saniye.
+        var fallbackSeconds =
+            Math.Pow(2, attempt) * 2;
+
+        return TimeSpan.FromSeconds(
+            Math.Min(
+                fallbackSeconds,
+                30));
     }
 }
