@@ -126,4 +126,16 @@ public class ResearchRepository : IResearchRepository
 
         await _context.SaveChangesAsync(cancellationToken);
     }
+
+    public async Task AddReportAsync(
+    Report report,
+    CancellationToken cancellationToken = default)
+    {
+        await _context.Reports.AddAsync(
+            report,
+            cancellationToken);
+
+        await _context.SaveChangesAsync(
+            cancellationToken);
+    }
 }

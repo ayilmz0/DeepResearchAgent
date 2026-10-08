@@ -7,6 +7,7 @@ using DeepResearchAgent.Infrastructure.Services.AI;
 using DeepResearchAgent.Infrastructure.Services.Analysis;
 using DeepResearchAgent.Infrastructure.Services.Crawling;
 using DeepResearchAgent.Infrastructure.Services.Planning;
+using DeepResearchAgent.Infrastructure.Services.Reporting;
 using DeepResearchAgent.Infrastructure.Services.Search;
 using DeepResearchAgent.Infrastructure.Services.Verification;
 using DeepResearchAgent.Worker;
@@ -24,10 +25,12 @@ builder.Services.AddScoped<IFactVerifier, FactVerifier>();
 
 builder.Services.AddScoped<IFactRelevanceAnalyzer, FactRelevanceAnalyzer>();
 
+builder.Services.AddScoped<IReportGenerator, ReportGenerator>();
+
 builder.Services.AddHttpClient<ICrawler, WebCrawler>(
     client =>
     {
-        client.Timeout = TimeSpan.FromSeconds(15);
+        client.Timeout = TimeSpan.FromSeconds(30);
 
         client.DefaultRequestHeaders.UserAgent.ParseAdd(
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +

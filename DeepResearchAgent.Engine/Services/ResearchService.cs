@@ -13,8 +13,7 @@ public class ResearchService : IResearchService
     private readonly ICrawler _crawler;
     private readonly IResearchAnalyzer _researchAnalyzer;
     private readonly IFactVerifier _factVerifier;
-    private readonly IResearchRepository _repository;
-
+    private readonly IReportGenerator _reportGenerator;
 
     public ResearchService(
         IResearchRepository researchRepository,
@@ -23,7 +22,7 @@ public class ResearchService : IResearchService
         ICrawler crawler,
         IResearchAnalyzer researchAnalyzer,
         IFactVerifier factVerifier,
-        IResearchRepository repository)
+        IReportGenerator reportGenerator)
     {
         _researchRepository = researchRepository;
         _researchPlanner = researchPlanner;
@@ -31,25 +30,7 @@ public class ResearchService : IResearchService
         _crawler = crawler;
         _researchAnalyzer = researchAnalyzer;
         _factVerifier = factVerifier;
-        _repository = repository;
-    }
-
-    public async Task<GetReportResponse?> GetReportByResearchIdAsync
-        (Guid researchId,
-        CancellationToken cancellationToken = default)
-    { 
-        var report = await _repository.GetReportByResearchIdAsync(
-            researchId, cancellationToken);
-        if (report is null)
-        {
-            return null; 
-        } return new GetReportResponse {
-            Id = report.Id,
-            ResearchId = report.ResearchId,
-            Title = report.Title,
-            Content = report.Content,
-            CreatedAt = report.CreatedAt
-        };
+        _reportGenerator = reportGenerator;
     }
 
     public async Task<CreateResearchResponse> CreateResearchAsync(
@@ -59,7 +40,7 @@ public class ResearchService : IResearchService
         if (string.IsNullOrWhiteSpace(request.Query))
         {
             throw new ArgumentException(
-                "Araştırma konusu boş olamaz.",
+                "Research query boş olamaz.",
                 nameof(request.Query));
         }
 
@@ -106,6 +87,30 @@ public class ResearchService : IResearchService
         };
     }
 
+    public async Task<GetReportResponse?> GetReportByResearchIdAsync(
+        Guid researchId,
+        CancellationToken cancellationToken = default)
+    {
+        var report =
+            await _researchRepository.GetReportByResearchIdAsync(
+                researchId,
+                cancellationToken);
+
+        if (report is null)
+        {
+            return null;
+        }
+
+        return new GetReportResponse
+        {
+            Id = report.Id,
+            ResearchId = report.ResearchId,
+            Title = report.Title,
+            Content = report.Content,
+            CreatedAt = report.CreatedAt
+        };
+    }
+
     public async Task<bool> ProcessPendingResearchAsync(
         CancellationToken cancellationToken = default)
     {
@@ -118,40 +123,53 @@ public class ResearchService : IResearchService
             return false;
         }
 
+        Console.WriteLine();
+        Console.WriteLine("======================================");
+        Console.WriteLine("RESEARCH PROCESSING STARTED");
+        Console.WriteLine("======================================");
+        Console.WriteLine($"Research ID: {research.Id}");
+        Console.WriteLine($"Query: {research.Query}");
+
         try
         {
-            // =====================================================
-            // 1. PLANNING
-            // =====================================================
-
-            Console.WriteLine();
-            Console.WriteLine("======================================");
-            Console.WriteLine("RESEARCH STARTED");
-            Console.WriteLine($"Research ID: {research.Id}");
-            Console.WriteLine($"Query: {research.Query}");
-            Console.WriteLine("======================================");
-
-            research.Status = ResearchStatus.Planning;
             research.StartedAt = DateTime.UtcNow;
 
             await _researchRepository.UpdateAsync(
                 research,
                 cancellationToken);
 
-            Console.WriteLine(
-                "Research Planner çalışıyor...");
+            // =====================================================
+            // 1. PLANNING
+            // =====================================================
+
+            research.Status = ResearchStatus.Planning;
+
+            await _researchRepository.UpdateAsync(
+                research,
+                cancellationToken);
+
+            Console.WriteLine();
+            Console.WriteLine("======================================");
+            Console.WriteLine("PLANNING STARTED");
+            Console.WriteLine("======================================");
 
             var tasks =
                 await _researchPlanner.CreatePlanAsync(
                     research,
                     cancellationToken);
 
-            Console.WriteLine(
-                $"Planner {tasks.Count} task oluşturdu.");
+            if (tasks is null || tasks.Count == 0)
+            {
+                throw new InvalidOperationException(
+                    "Research planner herhangi bir task oluşturmadı.");
+            }
 
             await _researchRepository.AddTasksAsync(
                 tasks,
                 cancellationToken);
+
+            Console.WriteLine(
+                $"Planning tamamlandı. Task sayısı: {tasks.Count}");
 
             // =====================================================
             // 2. SEARCHING
@@ -165,246 +183,269 @@ public class ResearchService : IResearchService
 
             Console.WriteLine();
             Console.WriteLine("======================================");
-            Console.WriteLine("SEARCHING");
+            Console.WriteLine("SEARCHING STARTED");
             Console.WriteLine("======================================");
 
-            var pendingTasks =
-                await _researchRepository.GetPendingTasksAsync(
-                    research.Id,
-                    cancellationToken);
+            var allSearchResults =
+                new List<SearchResultDto>();
 
-            Console.WriteLine(
-                $"İşlenecek task sayısı: {pendingTasks.Count}");
-
-            foreach (var task in pendingTasks)
+            foreach (var task in tasks)
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
                 Console.WriteLine();
-                Console.WriteLine("--------------------------------------");
-                Console.WriteLine("TASK");
-                Console.WriteLine($"Task ID: {task.Id}");
-                Console.WriteLine($"Query: {task.Query}");
-                Console.WriteLine($"Depth: {task.Depth}");
-                Console.WriteLine("--------------------------------------");
-
-                var searchResults =
-                    await _researchSearcher.SearchAsync(
-                        task.Query,
-                        cancellationToken);
-
                 Console.WriteLine(
-                    $"Tavily {searchResults.Count} sonuç döndürdü.");
+                    $"Search task: {task.Query}");
 
-                // =================================================
-                // 3. CRAWLING
-                // =================================================
-
-                research.Status = ResearchStatus.Crawling;
-
-                await _researchRepository.UpdateAsync(
-                    research,
-                    cancellationToken);
-
-                var sources = new List<Source>();
-
-                foreach (var result in searchResults)
+                try
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
+                    var searchResults =
+                        await _researchSearcher.SearchAsync(
+                            task.Query,
+                            cancellationToken);
 
-                    if (string.IsNullOrWhiteSpace(result.Url))
+                    if (searchResults is not null)
                     {
-                        continue;
+                        allSearchResults.AddRange(searchResults);
                     }
 
-                    Console.WriteLine();
-                    Console.WriteLine("======================================");
-                    Console.WriteLine("CRAWLING SOURCE");
-                    Console.WriteLine($"URL: {result.Url}");
-                    Console.WriteLine("======================================");
+                    task.Status = ResearchStatus.Searching;
 
-                    var source = new Source
-                    {
-                        Id = Guid.NewGuid(),
-                        ResearchId = research.Id,
-                        Url = result.Url,
-                        Title = result.Title,
-                        Content = null,
-                        Depth = task.Depth,
-                        RelevanceScore = 0,
-                        CrawlSucceeded = false,
-                        CrawledAt = null
-                    };
-
-                    try
-                    {
-                        var crawledContent =
-                            await _crawler.CrawlAsync(
-                                result.Url,
-                                cancellationToken);
-
-                        if (!string.IsNullOrWhiteSpace(crawledContent))
-                        {
-                            source.Content = crawledContent;
-                            source.CrawlSucceeded = true;
-
-                            Console.WriteLine(
-                                "Crawler başarılı.");
-
-                            Console.WriteLine(
-                                $"İçerik uzunluğu: {crawledContent.Length}");
-                        }
-                        else
-                        {
-                            Console.WriteLine(
-                                "Crawler boş içerik döndürdü.");
-                        }
-
-                        source.CrawledAt = DateTime.UtcNow;
-                    }
-                    catch (HttpRequestException ex)
-                    {
-                        source.CrawlSucceeded = false;
-                        source.CrawledAt = DateTime.UtcNow;
-
-                        Console.WriteLine(
-                            $"HTTP crawler hatası: {ex.Message}");
-
-                        Console.WriteLine(
-                            "Bu source atlanıyor.");
-                    }
-                    catch (InvalidOperationException ex)
-                    {
-                        source.CrawlSucceeded = false;
-                        source.CrawledAt = DateTime.UtcNow;
-
-                        Console.WriteLine(
-                            $"Crawler içerik hatası: {ex.Message}");
-
-                        Console.WriteLine(
-                            "Bu source atlanıyor.");
-                    }
-                    catch (Exception ex)
-                    {
-                        source.CrawlSucceeded = false;
-                        source.CrawledAt = DateTime.UtcNow;
-
-                        Console.WriteLine(
-                            $"Crawler beklenmeyen hata: {ex}");
-
-                        Console.WriteLine(
-                            "Bu source atlanıyor.");
-                    }
-
-                    sources.Add(source);
-                }
-
-                if (sources.Count > 0)
-                {
-                    await _researchRepository.AddSourcesAsync(
-                        sources,
+                    await _researchRepository.UpdateTaskAsync(
+                        task,
                         cancellationToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine(
+                        $"Search task başarısız: {task.Query}");
 
                     Console.WriteLine(
-                        $"{sources.Count} source database'e kaydedildi.");
+                        $"Hata: {ex.Message}");
+
+                    task.Status = ResearchStatus.Failed;
+
+                    await _researchRepository.UpdateTaskAsync(
+                        task,
+                        cancellationToken);
+                }
+            }
+
+            if (allSearchResults.Count == 0)
+            {
+                throw new InvalidOperationException(
+                    "Search sonucunda herhangi bir kaynak bulunamadı.");
+            }
+
+            Console.WriteLine(
+                $"Toplam search result: {allSearchResults.Count}");
+
+            // =====================================================
+            // 3. CRAWLING
+            // =====================================================
+
+            research.Status = ResearchStatus.Crawling;
+
+            await _researchRepository.UpdateAsync(
+                research,
+                cancellationToken);
+
+            Console.WriteLine();
+            Console.WriteLine("======================================");
+            Console.WriteLine("CRAWLING STARTED");
+            Console.WriteLine("======================================");
+
+            var sources = new List<Source>();
+
+            var processedUrls =
+                new HashSet<string>(
+                    StringComparer.OrdinalIgnoreCase);
+
+            foreach (var searchResult in allSearchResults)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                if (string.IsNullOrWhiteSpace(searchResult.Url))
+                {
+                    continue;
                 }
 
-                // =================================================
-                // 4. ANALYZING
-                // =================================================
-
-                research.Status = ResearchStatus.Analyzing;
-
-                await _researchRepository.UpdateAsync(
-                    research,
-                    cancellationToken);
+                if (!processedUrls.Add(searchResult.Url))
+                {
+                    continue;
+                }
 
                 Console.WriteLine();
-                Console.WriteLine("======================================");
-                Console.WriteLine("ANALYZING");
-                Console.WriteLine("======================================");
+                Console.WriteLine(
+                    $"Crawling: {searchResult.Url}");
 
-                // Sadece başarılı crawl edilen ve içeriği olan
-                // source'lar analiz edilecek.
-                //
-                // Şimdilik Gemini quota'sını korumak için
-                // research başına maksimum 5 source analiz ediyoruz.
+                var source = new Source
+                {
+                    Id = Guid.NewGuid(),
+                    ResearchId = research.Id,
+                    Url = searchResult.Url,
+                    Title = searchResult.Title,
+                    Depth = 0,
+                    RelevanceScore = 0,
+                    CrawlSucceeded = false,
+                    CrawledAt = DateTime.UtcNow
+                };
 
-                var analyzableSources = sources
-                    .Where(x => x.CrawlSucceeded)
-                    .Where(x => !string.IsNullOrWhiteSpace(x.Content))
+                try
+                {
+                    var crawlResult =
+                        await _crawler.CrawlAsync(
+                            searchResult.Url,
+                            cancellationToken);
+
+                    source.Content = crawlResult;
+
+                    source.CrawlSucceeded =
+                        !string.IsNullOrWhiteSpace(crawlResult);
+
+                    Console.WriteLine(
+                        $"Crawl başarılı: {source.CrawlSucceeded}");
+                }
+                catch (OperationCanceledException) when (
+                    !cancellationToken.IsCancellationRequested)
+                {
+                    Console.WriteLine();
+                    Console.WriteLine(
+                        $"Crawl timeout/cancellation: {searchResult.Url}");
+
+                    Console.WriteLine(
+                        "Bu source atlanıyor, research devam ediyor.");
+
+                    source.CrawlSucceeded = false;
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine(
+                        $"Crawl başarısız: {searchResult.Url}");
+
+                    Console.WriteLine(
+                        $"Hata: {ex.Message}");
+
+                    source.CrawlSucceeded = false;
+                }
+
+                sources.Add(source);
+            }
+
+            if (sources.Count == 0)
+            {
+                throw new InvalidOperationException(
+                    "Herhangi bir source oluşturulamadı.");
+            }
+
+            await _researchRepository.AddSourcesAsync(
+                sources,
+                cancellationToken);
+
+            Console.WriteLine(
+                $"Toplam source: {sources.Count}");
+
+            Console.WriteLine(
+                $"Başarılı crawl: " +
+                $"{sources.Count(x => x.CrawlSucceeded)}");
+
+            // =====================================================
+            // 4. ANALYZING
+            // =====================================================
+
+            research.Status = ResearchStatus.Analyzing;
+
+            await _researchRepository.UpdateAsync(
+                research,
+                cancellationToken);
+
+            Console.WriteLine();
+            Console.WriteLine("======================================");
+            Console.WriteLine("ANALYZING STARTED");
+            Console.WriteLine("======================================");
+
+            var successfulSources =
+                sources
+                    .Where(x =>
+                        x.CrawlSucceeded &&
+                        !string.IsNullOrWhiteSpace(x.Content))
                     .Take(5)
                     .ToList();
 
-                Console.WriteLine(
-                    $"Analiz edilecek source sayısı: " +
-                    $"{analyzableSources.Count}");
+            Console.WriteLine(
+                $"Analyze edilecek source sayısı: " +
+                $"{successfulSources.Count}");
 
-                foreach (var source in analyzableSources)
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
+            var allFacts = new List<Fact>();
 
-                    Console.WriteLine();
-                    Console.WriteLine("--------------------------------------");
-                    Console.WriteLine("SOURCE ANALYSIS");
-                    Console.WriteLine($"URL: {source.Url}");
-                    Console.WriteLine($"Title: {source.Title}");
-                    Console.WriteLine("--------------------------------------");
-
-                    try
-                    {
-                        var facts =
-                            await _researchAnalyzer.AnalyzeAsync(
-                                research,
-                                source,
-                                cancellationToken);
-
-                        Console.WriteLine(
-                            $"Gemini {facts.Count} fact çıkardı.");
-
-                        if (facts.Count == 0)
-                        {
-                            Console.WriteLine(
-                                "Bu source için ilgili fact bulunamadı.");
-
-                            continue;
-                        }
-
-                        await _researchRepository.AddFactsAsync(
-                            facts,
-                            cancellationToken);
-
-                        Console.WriteLine(
-                            $"{facts.Count} fact database'e kaydedildi.");
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine();
-                        Console.WriteLine(
-                            "!!! FACT EXTRACTION FAILED !!!");
-
-                        Console.WriteLine(
-                            $"Source: {source.Url}");
-
-                        Console.WriteLine(
-                            $"Exception: {ex}");
-
-                        Console.WriteLine(
-                            "Bu source analiz sırasında atlanıyor.");
-                    }
-                }
-
-                // Task tamamlandı.
-                task.Status = ResearchStatus.Completed;
-
-                await _researchRepository.UpdateTaskAsync(
-                    task,
-                    cancellationToken);
+            foreach (var source in successfulSources)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
 
                 Console.WriteLine();
                 Console.WriteLine(
-                    $"Task tamamlandı: {task.Id}");
+                    $"Analyzing source: {source.Title}");
+
+                try
+                {
+                    var facts =
+                        await _researchAnalyzer.AnalyzeAsync(
+                            research,
+                            source,
+                            cancellationToken);
+
+                    if (facts is null || facts.Count == 0)
+                    {
+                        Console.WriteLine(
+                            "Bu source için fact bulunamadı.");
+
+                        continue;
+                    }
+
+                    allFacts.AddRange(facts);
+
+                    Console.WriteLine(
+                        $"Source'tan çıkarılan fact sayısı: " +
+                        $"{facts.Count}");
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine(
+                        "Source analysis başarısız.");
+
+                    Console.WriteLine(
+                        $"Source: {source.Url}");
+
+                    Console.WriteLine(
+                        $"Hata: {ex.Message}");
+                }
             }
+
+            if (allFacts.Count == 0)
+            {
+                throw new InvalidOperationException(
+                    "Analyze aşamasında herhangi bir fact çıkarılamadı.");
+            }
+
+            await _researchRepository.AddFactsAsync(
+                allFacts,
+                cancellationToken);
+
+            Console.WriteLine();
+            Console.WriteLine(
+                $"Toplam fact sayısı: {allFacts.Count}");
 
             // =====================================================
             // 5. VERIFICATION
@@ -418,111 +459,220 @@ public class ResearchService : IResearchService
 
             Console.WriteLine();
             Console.WriteLine("======================================");
-            Console.WriteLine("VERIFICATION STARTED");
+            Console.WriteLine("FACT VERIFICATION STARTED");
             Console.WriteLine("======================================");
 
-            var allFacts =
-                await _researchRepository.GetFactsByResearchIdAsync(
-                    research.Id,
-                    cancellationToken);
+            IReadOnlyList<BatchFactVerificationResultDto>
+                verificationResults;
 
-            Console.WriteLine(
-                $"Verification yapılacak Fact sayısı: " +
-                $"{allFacts.Count}");
+            try
+            {
+                verificationResults =
+                    await _factVerifier.VerifyBatchAsync(
+                        allFacts,
+                        allFacts,
+                        cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine();
+                Console.WriteLine(
+                    "Batch fact verification sırasında " +
+                    "beklenmeyen hata oluştu.");
+
+                Console.WriteLine(
+                    $"Hata: {ex}");
+
+                verificationResults =
+                    allFacts
+                        .Select(
+                            fact =>
+                                new BatchFactVerificationResultDto
+                                {
+                                    FactId = fact.Id,
+                                    Status =
+                                        FactVerificationStatus
+                                            .InsufficientEvidence,
+                                    VerificationConfidence = 0,
+                                    SupportingSourceCount = 0,
+                                    ContradictingSourceCount = 0,
+                                    Summary =
+                                        "Fact verification servisi " +
+                                        "geçici olarak kullanılamadı."
+                                })
+                        .ToList();
+            }
 
             foreach (var fact in allFacts)
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                Console.WriteLine();
-                Console.WriteLine("--------------------------------------");
-                Console.WriteLine("FACT VERIFICATION");
-                Console.WriteLine($"Fact ID: {fact.Id}");
-                Console.WriteLine($"Claim: {fact.Claim}");
-                Console.WriteLine("--------------------------------------");
+                var verification =
+                    verificationResults.FirstOrDefault(
+                        x => x.FactId == fact.Id);
 
-                try
+                if (verification is null)
                 {
-                    var verification =
-                        await _factVerifier.VerifyAsync(
-                            fact,
-                            allFacts,
-                            cancellationToken);
-
-                    Console.WriteLine(
-                        "Gemini verification sonucu alındı.");
-
-                    Console.WriteLine(
-                        $"Verification Confidence: " +
-                        $"{verification.VerificationConfidence}");
-
-                    Console.WriteLine(
-                        $"Supporting Sources: " +
-                        $"{verification.SupportingSourceCount}");
-
-                    Console.WriteLine(
-                        $"Contradicting Sources: " +
-                        $"{verification.ContradictingSourceCount}");
-
                     fact.VerificationStatus =
-                        verification.Status;
+                        FactVerificationStatus.InsufficientEvidence;
 
-                    fact.VerificationConfidence =
-                        verification.VerificationConfidence;
+                    fact.VerificationConfidence = 0;
 
-                    fact.SupportingSourceCount =
-                        verification.SupportingSourceCount;
+                    fact.SupportingSourceCount = 0;
 
-                    fact.ContradictingSourceCount =
-                        verification.ContradictingSourceCount;
+                    fact.ContradictingSourceCount = 0;
 
                     fact.VerificationSummary =
-                        verification.Summary;
+                        "Verification sonucu bulunamadı.";
 
                     fact.VerifiedAt =
                         DateTime.UtcNow;
+
+                    continue;
                 }
-                catch (Exception ex)
-                {
-                    Console.WriteLine();
-                    Console.WriteLine(
-                        "!!! FACT VERIFICATION FAILED !!!");
 
-                    Console.WriteLine(
-                        $"Fact ID: {fact.Id}");
+                fact.VerificationStatus =
+                    verification.Status;
 
-                    Console.WriteLine(
-                        $"Claim: {fact.Claim}");
+                fact.VerificationConfidence =
+                    Math.Clamp(
+                        verification.VerificationConfidence,
+                        0.0,
+                        1.0);
 
-                    Console.WriteLine(
-                        $"Exception: {ex}");
+                fact.SupportingSourceCount =
+                    Math.Max(
+                        0,
+                        verification.SupportingSourceCount);
 
-                    Console.WriteLine(
-                        "Bu fact verification sırasında atlanıyor.");
-                }
-            }
+                fact.ContradictingSourceCount =
+                    Math.Max(
+                        0,
+                        verification.ContradictingSourceCount);
 
-            // =====================================================
-            // 6. SAVE VERIFICATION RESULTS
-            // =====================================================
+                fact.VerificationSummary =
+                    verification.Summary;
 
-            if (allFacts.Count > 0)
-            {
-                await _researchRepository.UpdateFactsAsync(
-                    allFacts,
-                    cancellationToken);
+                fact.VerifiedAt =
+                    DateTime.UtcNow;
 
                 Console.WriteLine();
+                Console.WriteLine("--------------------------------------");
+                Console.WriteLine("FACT VERIFICATION RESULT");
+                Console.WriteLine($"Fact ID: {fact.Id}");
+                Console.WriteLine($"Claim: {fact.Claim}");
                 Console.WriteLine(
-                    "Verification sonuçları database'e kaydedildi.");
+                    $"Status: {fact.VerificationStatus}");
+                Console.WriteLine(
+                    $"Confidence: {fact.VerificationConfidence}");
+                Console.WriteLine(
+                    $"Supporting Sources: " +
+                    $"{fact.SupportingSourceCount}");
+                Console.WriteLine(
+                    $"Contradicting Sources: " +
+                    $"{fact.ContradictingSourceCount}");
+                Console.WriteLine(
+                    $"Summary: {fact.VerificationSummary}");
+                Console.WriteLine("--------------------------------------");
             }
+
+            await _researchRepository.UpdateFactsAsync(
+                allFacts,
+                cancellationToken);
+
+            Console.WriteLine();
+            Console.WriteLine(
+                "Verification tamamlandı.");
+
+            Console.WriteLine(
+                $"Toplam fact: {allFacts.Count}");
+
+            Console.WriteLine(
+                $"Supported: " +
+                $"{allFacts.Count(x =>
+                    x.VerificationStatus ==
+                    FactVerificationStatus.Supported)}");
+
+            Console.WriteLine(
+                $"PartiallySupported: " +
+                $"{allFacts.Count(x =>
+                    x.VerificationStatus ==
+                    FactVerificationStatus.PartiallySupported)}");
+
+            Console.WriteLine(
+                $"Contradicted: " +
+                $"{allFacts.Count(x =>
+                    x.VerificationStatus ==
+                    FactVerificationStatus.Contradicted)}");
+
+            Console.WriteLine(
+                $"InsufficientEvidence: " +
+                $"{allFacts.Count(x =>
+                    x.VerificationStatus ==
+                    FactVerificationStatus.InsufficientEvidence)}");
+
+            // =====================================================
+            // 6. REPORT GENERATION
+            // =====================================================
+
+            research.Status =
+                ResearchStatus.GeneratingReport;
+
+            await _researchRepository.UpdateAsync(
+                research,
+                cancellationToken);
+
+            Console.WriteLine();
+            Console.WriteLine("======================================");
+            Console.WriteLine("REPORT GENERATION STARTED");
+            Console.WriteLine("======================================");
+
+            var reportableFacts =
+                allFacts
+                    .Where(x =>
+                        x.VerificationStatus ==
+                            FactVerificationStatus.Supported ||
+                        x.VerificationStatus ==
+                            FactVerificationStatus.PartiallySupported)
+                    .ToList();
+
+            Console.WriteLine(
+                $"Rapor için kullanılacak fact sayısı: " +
+                $"{reportableFacts.Count}");
+
+            if (reportableFacts.Count == 0)
+            {
+                throw new InvalidOperationException(
+                    "Rapor oluşturmak için doğrulanmış fact bulunamadı.");
+            }
+
+            var report =
+                await _reportGenerator.GenerateAsync(
+                    research,
+                    reportableFacts,
+                    cancellationToken);
+
+            await _researchRepository.AddReportAsync(
+                report,
+                cancellationToken);
+
+            Console.WriteLine();
+            Console.WriteLine(
+                "Report başarıyla oluşturuldu.");
 
             // =====================================================
             // 7. COMPLETED
             // =====================================================
 
-            research.Status = ResearchStatus.Completed;
-            research.CompletedAt = DateTime.UtcNow;
+            research.Status =
+                ResearchStatus.Completed;
+
+            research.CompletedAt =
+                DateTime.UtcNow;
 
             await _researchRepository.UpdateAsync(
                 research,
@@ -531,45 +681,46 @@ public class ResearchService : IResearchService
             Console.WriteLine();
             Console.WriteLine("======================================");
             Console.WriteLine("RESEARCH COMPLETED");
-            Console.WriteLine($"Research ID: {research.Id}");
             Console.WriteLine("======================================");
 
             return true;
         }
         catch (OperationCanceledException)
         {
+            Console.WriteLine();
+            Console.WriteLine(
+                "Research cancellation nedeniyle durduruldu.");
+
             throw;
         }
         catch (Exception ex)
         {
-            research.Status = ResearchStatus.Failed;
-
-            try
-            {
-                await _researchRepository.UpdateAsync(
-                    research,
-                    cancellationToken);
-            }
-            catch
-            {
-                // Ana hata zaten mevcut.
-                // Status update başarısız olursa
-                // ikinci bir exception ile asıl hatayı gizlemiyoruz.
-            }
-
             Console.WriteLine();
             Console.WriteLine("======================================");
             Console.WriteLine("RESEARCH FAILED");
             Console.WriteLine("======================================");
 
             Console.WriteLine(
-                $"Research ID: {research.Id}");
-
-            Console.WriteLine(
                 $"Exception: {ex}");
 
-            Console.WriteLine(
-                "======================================");
+            try
+            {
+                research.Status =
+                    ResearchStatus.Failed;
+
+                await _researchRepository.UpdateAsync(
+                    research,
+                    cancellationToken);
+            }
+            catch (Exception updateException)
+            {
+                Console.WriteLine(
+                    "Research Failed statusu database'e " +
+                    "kaydedilemedi.");
+
+                Console.WriteLine(
+                    $"Update error: {updateException}");
+            }
 
             return true;
         }

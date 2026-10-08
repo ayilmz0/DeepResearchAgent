@@ -9,4 +9,9 @@ public interface IFactRelevanceAnalyzer
         Research research,
         Fact fact,
         CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<BatchFactRelevanceResultDto>> AnalyzeBatchAsync(
+        Research research,
+        IReadOnlyList<Fact> facts,
+        CancellationToken cancellationToken = default);
 }
