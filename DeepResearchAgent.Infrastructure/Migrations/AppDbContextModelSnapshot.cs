@@ -40,6 +40,9 @@ namespace DeepResearchAgent.Infrastructure.Migrations
                     b.Property<Guid>("SourceId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<bool>("SupportsFact")
+                        .HasColumnType("bit");
+
                     b.HasKey("Id");
 
                     b.HasIndex("FactId");

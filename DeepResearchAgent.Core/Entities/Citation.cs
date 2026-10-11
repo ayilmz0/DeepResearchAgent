@@ -1,4 +1,5 @@
-﻿namespace DeepResearchAgent.Core.Entities;
+﻿
+namespace DeepResearchAgent.Core.Entities;
 
 public class Citation
 {
@@ -7,6 +8,10 @@ public class Citation
     public Guid FactId { get; set; }
 
     public Guid SourceId { get; set; }
+
+    // true: Kaynak bilgiyi destekliyor.
+    // false: Kaynak bilgiyle çelişiyor.
+    public bool SupportsFact { get; set; }
 
     public int? Page { get; set; }
 

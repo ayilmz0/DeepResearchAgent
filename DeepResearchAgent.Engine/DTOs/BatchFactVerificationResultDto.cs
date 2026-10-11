@@ -14,5 +14,9 @@ public class BatchFactVerificationResultDto
 
     public int ContradictingSourceCount { get; set; }
 
+    public List<Guid> SupportingSourceIds { get; set; } = [];
+
+    public List<Guid> ContradictingSourceIds { get; set; } = [];
+
     public string Summary { get; set; } = string.Empty;
 }

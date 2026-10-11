@@ -51,6 +51,10 @@ public interface IResearchRepository
         Guid researchId,
         CancellationToken cancellationToken = default);
 
+    Task AddCitationsAsync(
+        IEnumerable<Citation> citations,
+        CancellationToken cancellationToken = default);
+
     Task AddReportAsync(
     Report report,
     CancellationToken cancellationToken = default);
