@@ -194,6 +194,13 @@ namespace DeepResearchAgent.Infrastructure.Migrations
                     b.Property<int>("Depth")
                         .HasColumnType("int");
 
+                    b.Property<string>("Doi")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("NormalizedUrl")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
                     b.Property<DateTime?>("PublishedAt")
                         .HasColumnType("datetime2");
 
@@ -212,7 +219,7 @@ namespace DeepResearchAgent.Infrastructure.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("ResearchId");
+                    b.HasIndex("ResearchId", "NormalizedUrl");
 
                     b.ToTable("Sources");
                 });

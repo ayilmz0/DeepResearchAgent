@@ -8,6 +8,13 @@ public class Source
 
     public string Url { get; set; } = string.Empty;
 
+    /// <summary>
+    /// Araştırma içindeki URL'nin normalize edilmiş hali.
+    /// Aynı adresin farklı yazımlarını tespit etmek için kullanılır.
+    /// </summary>
+    public string NormalizedUrl { get; set; } = string.Empty;
+    public string? Doi { get; set; }
+
     public string? Title { get; set; }
 
     public string? Content { get; set; }

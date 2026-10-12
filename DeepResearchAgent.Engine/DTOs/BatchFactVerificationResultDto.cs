@@ -1,4 +1,5 @@
-﻿using DeepResearchAgent.Core.Enums;
+﻿
+using DeepResearchAgent.Core.Enums;
 
 namespace DeepResearchAgent.Engine.DTOs;
 
@@ -18,5 +19,16 @@ public class BatchFactVerificationResultDto
 
     public List<Guid> ContradictingSourceIds { get; set; } = [];
 
+    public List<FactEvidenceQuoteDto> SupportingEvidence { get; set; } = [];
+
+    public List<FactEvidenceQuoteDto> ContradictingEvidence { get; set; } = [];
+
     public string Summary { get; set; } = string.Empty;
+}
+
+public class FactEvidenceQuoteDto
+{
+    public Guid SourceId { get; set; }
+
+    public string Quote { get; set; } = string.Empty;
 }
