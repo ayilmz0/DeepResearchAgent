@@ -45,11 +45,11 @@ builder.Services.AddCors(options =>
     options.AddPolicy("Frontend", policy =>
     {
         policy
-            .WithOrigins("http://localhost:5091")
+            .WithOrigins("http://localhost:50163")
             .AllowAnyHeader()
             .AllowAnyMethod();
     });
-});
+}); 
 
 builder.Services.AddHttpClient<IResearchSearcher, SearchService>(
     client =>
