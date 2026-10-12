@@ -545,6 +545,24 @@ public class ResearchService : IResearchService
 
             Console.WriteLine($"Toplam fact sayısı: {allFacts.Count}");
 
+            // Verification öncesi kaynakları filtrele - sadece başarılı scan edilen kaynakları kullan
+            var validSources = sources
+                .Where(s => 
+                    s.CrawlSucceeded &&
+                    !string.IsNullOrWhiteSpace(s.Content) &&
+                    s.Id != Guid.Empty)
+                .ToList();
+
+            if (validSources.Count == 0)
+            {
+                Console.WriteLine(
+                    "UYARI: Geçerli kaynak bulunamadı. Verification yapılamayacak.");
+                throw new InvalidOperationException(
+                    "Başarıyla indirilen ve içerik olan kaynak bulunamadı.");
+            }
+
+            Console.WriteLine($"Geçerli kaynak sayısı: {validSources.Count}");
+
             // 5. VERIFICATION
             research.Status = ResearchStatus.Verifying;
 
@@ -564,7 +582,7 @@ public class ResearchService : IResearchService
                 verificationResults = await _factVerifier.VerifyBatchAsync(
                     allFacts,
                     allFacts,
-                    sources,
+                    validSources,
                     cancellationToken);
             }
             catch (OperationCanceledException)
