@@ -2,7 +2,9 @@
 using DeepResearchAgent.Core.Entities;
 using DeepResearchAgent.Core.Enums;
 using DeepResearchAgent.Engine.DTOs;
+using DeepResearchAgent.Engine.Helpers;
 using DeepResearchAgent.Engine.Interfaces;
+using System.Text.RegularExpressions;
 
 namespace DeepResearchAgent.Engine.Services;
 
@@ -15,6 +17,7 @@ public class ResearchService : IResearchService
     private readonly IResearchAnalyzer _researchAnalyzer;
     private readonly IFactVerifier _factVerifier;
     private readonly IReportGenerator _reportGenerator;
+    private readonly ISourceRelevanceAnalyzer _sourceRelevanceAnalyzer;
 
     public ResearchService(
         IResearchRepository researchRepository,
@@ -23,7 +26,8 @@ public class ResearchService : IResearchService
         ICrawler crawler,
         IResearchAnalyzer researchAnalyzer,
         IFactVerifier factVerifier,
-        IReportGenerator reportGenerator)
+        IReportGenerator reportGenerator,
+        ISourceRelevanceAnalyzer sourceRelevanceAnalyzer)
     {
         _researchRepository = researchRepository;
         _researchPlanner = researchPlanner;
@@ -32,6 +36,55 @@ public class ResearchService : IResearchService
         _researchAnalyzer = researchAnalyzer;
         _factVerifier = factVerifier;
         _reportGenerator = reportGenerator;
+        _sourceRelevanceAnalyzer = sourceRelevanceAnalyzer;
+    }
+
+    private static string NormalizeDoi(string doi)
+    {
+        doi = doi.Trim();
+
+        string[] prefixes =
+        [
+            "https://doi.org/",
+            "http://doi.org/",
+            "https://dx.doi.org/",
+            "http://dx.doi.org/",
+            "doi:"
+        ];
+
+        foreach (var prefix in prefixes)
+        {
+            if (doi.StartsWith(
+                    prefix,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                doi = doi[prefix.Length..].Trim();
+                break;
+            }
+        }
+
+        return doi.TrimEnd('/').ToLowerInvariant();
+    }
+
+    private static bool QuoteExistsInSource(
+        string? sourceContent,
+        string? quote)
+    {
+        if (string.IsNullOrWhiteSpace(sourceContent) ||
+            string.IsNullOrWhiteSpace(quote))
+        {
+            return false;
+        }
+
+        static string NormalizeWhitespace(string value) =>
+            Regex.Replace(value, @"\s+", " ").Trim();
+
+        var normalizedContent = NormalizeWhitespace(sourceContent);
+        var normalizedQuote = NormalizeWhitespace(quote);
+
+        return normalizedContent.Contains(
+            normalizedQuote,
+            StringComparison.OrdinalIgnoreCase);
     }
 
     public async Task<CreateResearchResponse> CreateResearchAsync(
@@ -207,7 +260,7 @@ public class ResearchService : IResearchService
             var distinctSearchResults = allSearchResults
                 .Where(x => !string.IsNullOrWhiteSpace(x.Url))
                 .GroupBy(
-                    x => x.Url.Trim(),
+                    x => UrlNormalizer.Normalize(x.Url),
                     StringComparer.OrdinalIgnoreCase)
                 .Select(g => g.First())
                 .ToList();
@@ -245,6 +298,8 @@ public class ResearchService : IResearchService
                     Id = Guid.NewGuid(),
                     ResearchId = research.Id,
                     Url = searchResult.Url,
+                    NormalizedUrl = UrlNormalizer.Normalize(
+                        searchResult.Url),
                     Title = searchResult.Title,
                     Depth = 0,
                     RelevanceScore = 0,
@@ -255,16 +310,43 @@ public class ResearchService : IResearchService
                 try
                 {
                     var crawlResult = await _crawler.CrawlAsync(
-                        searchResult.Url, cancellationToken);
+                        searchResult.Url,
+                        cancellationToken);
 
-                    source.Content = crawlResult;
+                    source.Content = crawlResult.Content;
+                    source.Doi = crawlResult.Doi;
+
+                    if (!string.IsNullOrWhiteSpace(crawlResult.Title))
+                    {
+                        source.Title = crawlResult.Title;
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(
+                            crawlResult.CanonicalUrl))
+                    {
+                        source.NormalizedUrl =
+                            UrlNormalizer.Normalize(
+                                crawlResult.CanonicalUrl);
+                    }
+
                     source.CrawlSucceeded =
-                        !string.IsNullOrWhiteSpace(crawlResult);
+                        !string.IsNullOrWhiteSpace(
+                            crawlResult.Content);
 
                     Console.WriteLine(
                         $"Crawl başarılı: {source.CrawlSucceeded}");
+
                     Console.WriteLine(
-                        $"İçerik uzunluğu: {crawlResult?.Length ?? 0}");
+                        $"İçerik uzunluğu: {crawlResult.Content.Length}");
+
+                    Console.WriteLine(
+                        $"Sayfa başlığı: {source.Title}");
+
+                    Console.WriteLine(
+                        $"Canonical URL: {source.NormalizedUrl}");
+
+                    Console.WriteLine(
+                        $"DOI: {crawlResult.Doi ?? "Bulunamadı"}");
                 }
                 catch (OperationCanceledException)
                     when (!cancellationToken.IsCancellationRequested)
@@ -287,8 +369,38 @@ public class ResearchService : IResearchService
                     source.CrawlSucceeded = false;
                 }
 
+                Console.WriteLine($"Source URL: {source.Url}");
+                Console.WriteLine(
+                    $"Normalized URL: {source.NormalizedUrl}");
+                Console.WriteLine($"Title: {source.Title}");
+                Console.WriteLine(
+                    $"Crawl succeeded: {source.CrawlSucceeded}");
+                Console.WriteLine(
+                    $"Content length: {source.Content?.Length ?? 0}");
+
                 sources.Add(source);
             }
+
+            var uniqueSources = sources
+                .GroupBy(
+                    source => !string.IsNullOrWhiteSpace(source.Doi)
+                        ? $"doi:{NormalizeDoi(source.Doi)}"
+                        : $"url:{UrlNormalizer.Normalize(
+                            source.NormalizedUrl ?? source.Url)}",
+                    StringComparer.OrdinalIgnoreCase)
+                .Select(group => group
+                    .OrderByDescending(source => source.CrawlSucceeded)
+                    .ThenByDescending(
+                        source => source.Content?.Length ?? 0)
+                    .First())
+                .ToList();
+
+            Console.WriteLine(
+                $"Crawl sonrası kaynak sayısı: {sources.Count}");
+            Console.WriteLine(
+                $"Tekilleştirme sonrası kaynak sayısı: {uniqueSources.Count}");
+
+            sources = uniqueSources;
 
             if (!sources.Any(x => x.CrawlSucceeded))
             {
@@ -296,9 +408,52 @@ public class ResearchService : IResearchService
                     "Hiçbir source başarıyla crawl edilemedi.");
             }
 
+            var crawlableSources = sources
+                .Where(x =>
+                    x.CrawlSucceeded &&
+                    !string.IsNullOrWhiteSpace(x.Content))
+                .ToList();
+
+            Console.WriteLine();
+            Console.WriteLine("======================================");
+            Console.WriteLine("SOURCE RELEVANCE FILTER STARTED");
+            Console.WriteLine("======================================");
+
+            var relevanceResults =
+                await _sourceRelevanceAnalyzer.AnalyzeBatchAsync(
+                    research,
+                    crawlableSources,
+                    cancellationToken);
+
+            var relevantSourceIds = relevanceResults
+                .Where(x => x.IsRelevant)
+                .Select(x => x.SourceId)
+                .ToHashSet();
+
+            var relevantSources = crawlableSources
+                .Where(x => relevantSourceIds.Contains(x.Id))
+                .ToList();
+
+            Console.WriteLine(
+                $"Crawlable sources: {crawlableSources.Count}");
+            Console.WriteLine(
+                $"Relevant sources: {relevantSources.Count}");
+            Console.WriteLine(
+                $"Filtered out: {crawlableSources.Count - relevantSources.Count}");
+
+            if (relevantSources.Count == 0)
+            {
+                throw new InvalidOperationException(
+                    "Araştırma konusuyla ilgili kaynak bulunamadı.");
+            }
+
+            sources = relevantSources;
+
             await _researchRepository.AddSourcesAsync(
                 sources, cancellationToken);
 
+            Console.WriteLine(
+                $"Kaydedilen ilgili kaynak sayısı: {sources.Count}");
             Console.WriteLine($"Toplam source: {sources.Count}");
             Console.WriteLine(
                 $"Başarılı crawl: {sources.Count(x => x.CrawlSucceeded)}");
@@ -314,8 +469,6 @@ public class ResearchService : IResearchService
             Console.WriteLine("ANALYZING STARTED");
             Console.WriteLine("======================================");
 
-            // Değişiklik: Tüm başarılı kaynakları analiz et.
-            // Daha fazla kaynak analiz etmek işlem maliyetini artırabilir.
             var successfulSources = sources
                 .Where(x =>
                     x.CrawlSucceeded &&
@@ -408,9 +561,11 @@ public class ResearchService : IResearchService
 
             try
             {
-                verificationResults =
-                    await _factVerifier.VerifyBatchAsync(
-                        allFacts, allFacts, cancellationToken);
+                verificationResults = await _factVerifier.VerifyBatchAsync(
+                    allFacts,
+                    allFacts,
+                    sources,
+                    cancellationToken);
             }
             catch (OperationCanceledException)
             {
@@ -419,27 +574,13 @@ public class ResearchService : IResearchService
             catch (Exception ex)
             {
                 Console.WriteLine(
-                    "Batch fact verification sırasında hata oluştu.");
-                Console.WriteLine($"Hata: {ex}");
+                    "Batch fact verification başarısız oldu. " +
+                    "Araştırma işlemi durdurulacak.");
 
-                verificationResults = allFacts
-                    .Select(fact => new BatchFactVerificationResultDto
-                    {
-                        FactId = fact.Id,
-                        Status =
-                            FactVerificationStatus.InsufficientEvidence,
-                        VerificationConfidence = 0,
-                        SupportingSourceCount = 0,
-                        ContradictingSourceCount = 0,
-                        SupportingSourceIds = [],
-                        ContradictingSourceIds = [],
-                        Summary =
-                            "Fact verification servisi kullanılamadı."
-                    })
-                    .ToList();
+                Console.WriteLine(ex);
+                throw;
             }
 
-            // Doğrulama sonuçlarını, kaynak ID'leri dahil, ayrıntılı logla.
             Console.WriteLine();
             Console.WriteLine("======================================");
             Console.WriteLine("VERIFICATION RESULT DIAGNOSTICS");
@@ -469,83 +610,154 @@ public class ResearchService : IResearchService
                 .ToDictionary(g => g.Key, g => g.First());
 
             var validSourceIds = sources
-                .Where(x => x.CrawlSucceeded)
+                .Where(x =>
+                    x.CrawlSucceeded &&
+                    !string.IsNullOrWhiteSpace(x.Content))
                 .Select(x => x.Id)
                 .ToHashSet();
+
+            var sourceById = sources
+                .Where(source => source.Id != Guid.Empty)
+                .GroupBy(source => source.Id)
+                .ToDictionary(
+                    group => group.Key,
+                    group => group.First());
 
             var citations = new List<Citation>();
 
             foreach (var fact in allFacts)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-
                 if (!resultsByFactId.TryGetValue(
-                    fact.Id, out var verification))
+                        fact.Id,
+                        out var verification))
                 {
                     fact.VerificationStatus =
                         FactVerificationStatus.InsufficientEvidence;
+
                     fact.VerificationConfidence = 0;
                     fact.SupportingSourceCount = 0;
                     fact.ContradictingSourceCount = 0;
                     fact.VerificationSummary =
-                        "Verification sonucu bulunamadı.";
-                    fact.VerifiedAt = DateTime.UtcNow;
+                        "Bu fact için doğrulama sonucu bulunamadı.";
 
                     Console.WriteLine(
-                        $"Verification sonucu eksik: FactId={fact.Id}");
+                        $"UYARI: Fact için doğrulama sonucu bulunamadı. " +
+                        $"FactId={fact.Id}");
 
                     continue;
                 }
 
-                fact.VerificationConfidence =
-                    double.IsFinite(verification.VerificationConfidence)
-                        ? Math.Clamp(
-                            verification.VerificationConfidence, 0.0, 1.0)
-                        : 0.0;
-
+                // AI doğrulama sonucunu fact nesnesine aktar.
                 fact.VerificationStatus = verification.Status;
-                fact.VerificationSummary =
-                    verification.Summary ?? string.Empty;
-                fact.VerifiedAt = DateTime.UtcNow;
+                fact.VerificationConfidence =
+                    verification.VerificationConfidence;
+                fact.VerificationSummary = verification.Summary;
 
-                var supportingSourceIds =
-                    (verification.SupportingSourceIds ?? [])
-                    .Where(id => id != Guid.Empty)
-                    .Where(validSourceIds.Contains)
-                    .Where(id => id != fact.SourceId)
+                var supportingEvidence =
+                    (verification.SupportingEvidence ?? [])
+                    .Where(e => e.SourceId != Guid.Empty)
+                    .Where(e => e.SourceId != fact.SourceId)
+                    .Where(e => validSourceIds.Contains(e.SourceId))
+                    .Where(e => !string.IsNullOrWhiteSpace(e.Quote))
+                    .Where(e =>
+                        sourceById.TryGetValue(
+                            e.SourceId, out var source) &&
+                        QuoteExistsInSource(source.Content, e.Quote))
+                    .GroupBy(e => e.SourceId)
+                    .Select(g => g.First())
+                    .ToList();
+
+                var supportingSourceIds = supportingEvidence
+                    .Select(e => e.SourceId)
                     .ToHashSet();
 
-                var contradictingSourceIds =
-                    (verification.ContradictingSourceIds ?? [])
-                    .Where(id => id != Guid.Empty)
-                    .Where(validSourceIds.Contains)
-                    .Where(id => id != fact.SourceId)
-                    .Where(id => !supportingSourceIds.Contains(id))
-                    .ToHashSet();
+                var contradictingEvidence =
+                    (verification.ContradictingEvidence ?? [])
+                    .Where(e => e.SourceId != Guid.Empty)
+                    .Where(e => e.SourceId != fact.SourceId)
+                    .Where(e => validSourceIds.Contains(e.SourceId))
+                    .Where(e => !supportingSourceIds.Contains(e.SourceId))
+                    .Where(e => !string.IsNullOrWhiteSpace(e.Quote))
+                    .Where(e =>
+                        sourceById.TryGetValue(
+                            e.SourceId, out var source) &&
+                        QuoteExistsInSource(source.Content, e.Quote))
+                    .GroupBy(e => e.SourceId)
+                    .Select(g => g.First())
+                    .ToList();
 
-                fact.SupportingSourceCount = supportingSourceIds.Count;
+                fact.SupportingSourceCount = supportingEvidence.Count;
                 fact.ContradictingSourceCount =
-                    contradictingSourceIds.Count;
+                    contradictingEvidence.Count;
 
-                foreach (var sourceId in supportingSourceIds)
+                // Durum ile doğrulanmış kanıtların tutarlılığını koru.
+                if (fact.VerificationStatus ==
+                        FactVerificationStatus.Supported &&
+                    fact.SupportingSourceCount == 0)
+                {
+                    fact.VerificationStatus =
+                        FactVerificationStatus.InsufficientEvidence;
+
+                    fact.VerificationSummary =
+                        AppendSummary(
+                            fact.VerificationSummary,
+                            "Geçerli destekleyici alıntı bulunamadığı için " +
+                            "Supported durumu kabul edilmedi.");
+                }
+
+                if (fact.VerificationStatus ==
+                        FactVerificationStatus.PartiallySupported &&
+                    fact.SupportingSourceCount == 0)
+                {
+                    fact.VerificationStatus =
+                        fact.ContradictingSourceCount > 0
+                            ? FactVerificationStatus.Contradicted
+                            : FactVerificationStatus.InsufficientEvidence;
+
+                    fact.VerificationSummary =
+                        AppendSummary(
+                            fact.VerificationSummary,
+                            "Geçerli destekleyici alıntı bulunamadığı için " +
+                            "kısmi destek durumu kabul edilmedi.");
+                }
+
+                if (fact.VerificationStatus ==
+                        FactVerificationStatus.Contradicted &&
+                    fact.ContradictingSourceCount == 0)
+                {
+                    fact.VerificationStatus =
+                        FactVerificationStatus.InsufficientEvidence;
+
+                    fact.VerificationSummary =
+                        AppendSummary(
+                            fact.VerificationSummary,
+                            "Geçerli çelişkili alıntı bulunamadığı için " +
+                            "Contradicted durumu kabul edilmedi.");
+                }
+
+                foreach (var evidence in supportingEvidence)
                 {
                     citations.Add(new Citation
                     {
                         Id = Guid.NewGuid(),
                         FactId = fact.Id,
-                        SourceId = sourceId,
-                        SupportsFact = true
+                        SourceId = evidence.SourceId,
+                        SupportsFact = true,
+                        Quote = evidence.Quote.Trim(),
+                        Page = null
                     });
                 }
 
-                foreach (var sourceId in contradictingSourceIds)
+                foreach (var evidence in contradictingEvidence)
                 {
                     citations.Add(new Citation
                     {
                         Id = Guid.NewGuid(),
                         FactId = fact.Id,
-                        SourceId = sourceId,
-                        SupportsFact = false
+                        SourceId = evidence.SourceId,
+                        SupportsFact = false,
+                        Quote = evidence.Quote.Trim(),
+                        Page = null
                     });
                 }
 
@@ -746,5 +958,15 @@ public class ResearchService : IResearchService
 
             return true;
         }
+    }
+
+    private static string AppendSummary(
+        string? existingSummary,
+        string additionalMessage)
+    {
+        if (string.IsNullOrWhiteSpace(existingSummary))
+            return additionalMessage;
+
+        return $"{existingSummary.Trim()} {additionalMessage}";
     }
 }

@@ -27,6 +27,14 @@ public class AppDbContext : DbContext
         modelBuilder.ApplyConfigurationsFromAssembly(
             typeof(AppDbContext).Assembly);
 
+
+        modelBuilder.Entity<Source>()
+            .HasIndex(source => new
+            {
+                source.ResearchId,
+                source.NormalizedUrl
+            });
+
         base.OnModelCreating(modelBuilder);
     }
 }

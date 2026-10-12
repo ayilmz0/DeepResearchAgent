@@ -1,4 +1,6 @@
-﻿using System.Text.Json;
+﻿
+using System.Text.Json;
+using System.Text.RegularExpressions;
 using DeepResearchAgent.Core.Entities;
 using DeepResearchAgent.Engine.DTOs;
 using DeepResearchAgent.Engine.Interfaces;
@@ -25,21 +27,16 @@ public class ReportGenerator : IReportGenerator
                 "Report cannot be generated because no verified facts are available.");
         }
 
-        var prompt = BuildPrompt(research, facts);
+        var sourceCatalog = BuildSourceCatalog(facts);
+        var prompt = BuildPrompt(research, facts, sourceCatalog);
 
         var responseSchema = new
         {
             type = "OBJECT",
             properties = new
             {
-                title = new
-                {
-                    type = "STRING"
-                },
-                content = new
-                {
-                    type = "STRING"
-                }
+                title = new { type = "STRING" },
+                content = new { type = "STRING" }
             },
             required = new[]
             {
@@ -79,106 +76,230 @@ public class ReportGenerator : IReportGenerator
                 "Generated report content is empty.");
         }
 
+        var content = RemoveUnknownCitations(
+            generatedReport.Content.Trim(),
+            sourceCatalog);
+
+        content = AppendSourceReferences(content, sourceCatalog);
+
         return new Report
         {
             Id = Guid.NewGuid(),
             ResearchId = research.Id,
             Title = generatedReport.Title.Trim(),
-            Content = generatedReport.Content.Trim(),
+            Content = content,
             CreatedAt = DateTime.UtcNow
         };
     }
 
+    private static Dictionary<Guid, SourceReference> BuildSourceCatalog(
+        IReadOnlyList<Fact> facts)
+    {
+        var catalog = new Dictionary<Guid, SourceReference>();
+        var labelsByKey = new Dictionary<string, string>(
+            StringComparer.OrdinalIgnoreCase);
+
+        foreach (var fact in facts)
+        {
+            var source = fact.Source;
+
+            var title = source?.Title?.Trim() ?? "Unknown source";
+            var url = source?.Url?.Trim() ?? string.Empty;
+
+            // Prefer URL to identify a source.
+            // If no URL exists, use its title.
+            var key = !string.IsNullOrWhiteSpace(url)
+                ? url
+                : !string.IsNullOrWhiteSpace(title)
+                    ? title
+                    : $"unknown-{fact.Id:N}";
+
+            if (!labelsByKey.TryGetValue(key, out var label))
+            {
+                label = $"S{labelsByKey.Count + 1}";
+                labelsByKey[key] = label;
+            }
+
+            catalog[fact.Id] = new SourceReference(
+                label,
+                title,
+                url);
+        }
+
+        return catalog;
+    }
+
     private static string BuildPrompt(
         Research research,
-        IReadOnlyList<Fact> facts)
+        IReadOnlyList<Fact> facts,
+        IReadOnlyDictionary<Guid, SourceReference> sourceCatalog)
     {
         var factsText = string.Join(
             "\n\n",
             facts.Select((fact, index) =>
-                $"""
-                FACT {index + 1}
+            {
+                var source = sourceCatalog[fact.Id];
 
-                Claim:
-                {fact.Claim}
+                return $"""
+                    FACT F{index + 1}
 
-                Value:
-                {fact.Value ?? "N/A"}
+                    Fact ID:
+                    {fact.Id}
 
-                Source:
-                {fact.Source.Title ?? "Unknown"}
+                    Claim:
+                    {fact.Claim}
 
-                URL:
-                {fact.Source.Url}
+                    Value:
+                    {fact.Value ?? "N/A"}
 
-                Verification Status:
-                {fact.VerificationStatus}
+                    Direct Source Reference:
+                    [{source.Label}]
 
-                Verification Confidence:
-                {fact.VerificationConfidence?.ToString("F2") ?? "N/A"}
+                    Source Title:
+                    {source.Title}
 
-                Supporting Sources:
-                {fact.SupportingSourceCount}
+                    Source URL:
+                    {source.Url}
 
-                Contradicting Sources:
-                {fact.ContradictingSourceCount}
+                    Verification Status:
+                    {fact.VerificationStatus}
 
-                Verification Summary:
-                {fact.VerificationSummary ?? "N/A"}
-                """));
+                    Verification Confidence:
+                    {fact.VerificationConfidence?.ToString("F2") ?? "N/A"}
+
+                    Supporting Source Count:
+                    {fact.SupportingSourceCount}
+
+                    Contradicting Source Count:
+                    {fact.ContradictingSourceCount}
+
+                    Verification Summary:
+                    {fact.VerificationSummary ?? "N/A"}
+                    """;
+            }));
+
+        var sourcesText = string.Join(
+            "\n",
+            sourceCatalog.Values
+                .GroupBy(source => source.Label)
+                .Select(group => group.First())
+                .OrderBy(source =>
+                    int.Parse(source.Label.Substring(1)))
+                .Select(source =>
+                    $"[{source.Label}] {source.Title} - " +
+                    (string.IsNullOrWhiteSpace(source.Url)
+                        ? "URL unavailable"
+                        : source.Url)));
 
         return $"""
-        You are an expert research report writer.
+            You are an expert research report writer.
 
-        Research topic:
-        {research.Query}
+            Research topic:
+            {research.Query}
 
-        Your task is to create a clear, objective and well-structured
-        research report using ONLY the verified facts provided below.
+            Write a detailed, objective and evidence-based research report
+            using only the facts and source information provided below.
 
-        IMPORTANT RULES:
+            STRICT EVIDENCE RULES:
 
-        1. Do not invent facts.
-        2. Do not introduce information that is not supported by the provided facts.
-        3. Do not present uncertain information as certain.
-        4. If a fact is partially supported, clearly communicate the uncertainty.
-        5. Prefer evidence with higher verification confidence.
-        6. Keep the report focused on the research topic.
-        7. Explain important findings in a logical order.
-        8. Include a conclusion based only on the provided evidence.
-        9. Mention limitations when the available evidence is insufficient.
-        10. Do not fabricate sources or URLs.
+            1. Do not invent facts, statistics, quotations, URLs or sources.
+            2. Do not introduce claims that are not supported by the provided facts.
+            3. Add an inline citation such as [S1] to every important factual claim.
+            4. Use only source labels explicitly associated with the relevant facts.
+            5. Never invent a source label.
+            6. A source being listed does not automatically prove every claim.
+            7. Do not describe a fact's direct source as multiple independent sources.
+            8. Supporting Source Count is a count, not a list of source identities.
+            9. Do not infer the identities of supporting sources from that count.
+            10. Distinguish Supported from PartiallySupported facts.
+            11. Do not describe partially supported claims as established facts.
+            12. Preserve the original meaning of numerical values and dates.
+            13. If evidence is insufficient, explain the limitation instead
+                of filling the gap with assumptions.
+            14. Prefer relevant facts with higher verification confidence.
+            15. Do not claim that a source proves something unless the provided
+                fact and verification information justify that conclusion.
 
-        Create the report with the following structure:
+            REPORT STRUCTURE:
 
-        # Introduction
+            # Introduction
+            Explain the research question and scope.
 
-        Explain what the research investigates.
+            # Key Findings
+            Summarize the most important findings with inline citations.
 
-        # Key Findings
+            # Detailed Analysis
+            Explain each major finding, its evidence and its implications.
+            Include specific examples only when provided in the facts.
 
-        Present the most important verified findings.
+            # Evidence and Reliability
+            Discuss verification status, confidence and evidence limitations.
+            Do not imply that a confidence score is a statistical probability.
 
-        # Detailed Analysis
+            # Conclusion
+            Summarize only conclusions supported by the evidence.
 
-        Explain the findings and their implications.
+            # Limitations
+            Explain gaps, uncertainty, conflicting evidence and unsupported claims.
 
-        # Evidence and Reliability
+            Do not generate a Sources or References section.
+            The application will append the source list automatically.
 
-        Discuss the reliability of the findings based on their
-        verification status and supporting evidence.
+            VERIFIED FACTS:
 
-        # Conclusion
+            {factsText}
 
-        Summarize the main conclusions supported by the evidence.
+            AVAILABLE SOURCE CATALOG:
 
-        # Limitations
-
-        Mention important uncertainties, gaps or limitations in the evidence.
-
-        VERIFIED FACTS:
-
-        {factsText}
-        """;
+            {sourcesText}
+            """;
     }
+
+    private static string RemoveUnknownCitations(
+        string content,
+        IReadOnlyDictionary<Guid, SourceReference> sourceCatalog)
+    {
+        var validLabels = sourceCatalog.Values
+            .Select(source => source.Label)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        return Regex.Replace(
+            content,
+            @"\[S\d+\]",
+            match => validLabels.Contains(match.Value[1..^1])
+                ? match.Value
+                : string.Empty);
+    }
+
+    private static string AppendSourceReferences(
+        string content,
+        IReadOnlyDictionary<Guid, SourceReference> sourceCatalog)
+    {
+        var sources = sourceCatalog.Values
+            .GroupBy(source => source.Label)
+            .Select(group => group.First())
+            .OrderBy(source =>
+                int.Parse(source.Label.Substring(1)))
+            .ToList();
+
+        var references = string.Join(
+            "\n",
+            sources.Select(source =>
+                string.IsNullOrWhiteSpace(source.Url)
+                    ? $"- [{source.Label}] {source.Title} (URL unavailable)"
+                    : $"- [{source.Label}] [{source.Title}]({source.Url})"));
+
+        return $"""
+            {content}
+
+            ## Sources
+
+            {references}
+            """;
+    }
+
+    private sealed record SourceReference(
+        string Label,
+        string Title,
+        string Url);
 }

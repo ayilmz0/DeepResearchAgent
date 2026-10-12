@@ -1,4 +1,5 @@
-﻿using DeepResearchAgent.Engine.Interfaces;
+﻿using DeepResearchAgent.Engine.DTOs;
+using DeepResearchAgent.Engine.Interfaces;
 using HtmlAgilityPack;
 
 namespace DeepResearchAgent.Infrastructure.Services.Crawling;
@@ -12,187 +13,183 @@ public class WebCrawler : ICrawler
         _httpClient = httpClient;
     }
 
-    public async Task<string> CrawlAsync(
+    public async Task<CrawlResultDto> CrawlAsync(
         string url,
         CancellationToken cancellationToken = default)
     {
-        Console.WriteLine();
-        Console.WriteLine("======================================");
-        Console.WriteLine("          CRAWLER START");
-        Console.WriteLine("======================================");
-        Console.WriteLine($"URL: {url}");
-        Console.WriteLine("HTTP request gönderiliyor...");
-
-        var response = await _httpClient.GetAsync(
+        using var response = await _httpClient.GetAsync(
             url,
             cancellationToken);
 
-        Console.WriteLine(
-            $"HTTP Status: {(int)response.StatusCode} {response.StatusCode}");
-
-        if (!response.IsSuccessStatusCode)
-        {
-            Console.WriteLine(
-                $"HTTP request başarısız: {url}");
-
-            throw new HttpRequestException(
-                $"HTTP {(int)response.StatusCode} - " +
-                $"{response.StatusCode}");
-        }
+        response.EnsureSuccessStatusCode();
 
         var contentType =
             response.Content.Headers.ContentType?.MediaType;
 
-        Console.WriteLine(
-            $"Content-Type: {contentType}");
-
         if (contentType is not null &&
-            !contentType.Contains("html"))
+            !contentType.Contains(
+                "html",
+                StringComparison.OrdinalIgnoreCase))
         {
-            Console.WriteLine(
-                $"Desteklenmeyen Content-Type: {contentType}");
-
             throw new InvalidOperationException(
                 $"Desteklenmeyen content type: {contentType}");
         }
 
-        Console.WriteLine(
-            "HTML içeriği okunuyor...");
-
-        var html =
-            await response.Content.ReadAsStringAsync(
-                cancellationToken);
-
-        Console.WriteLine(
-            $"HTML alındı. Karakter sayısı: {html.Length}");
+        var html = await response.Content.ReadAsStringAsync(
+            cancellationToken);
 
         var document = new HtmlDocument();
-
-        Console.WriteLine(
-            "HTML parse ediliyor...");
-
         document.LoadHtml(html);
-
-        Console.WriteLine(
-            "Gereksiz HTML node'ları temizleniyor...");
 
         RemoveUnnecessaryNodes(document);
 
-        Console.WriteLine(
-            "Ana içerik aranıyor...");
+        var title = ExtractTitle(document);
+        var canonicalUrl = ExtractCanonicalUrl(document, url);
+        var doi = ExtractDoi(document);
 
-        var contentNode =
-            FindMainContent(document);
+        var contentNode = FindMainContent(document);
 
-        string result;
+        var content = CleanText(
+            contentNode?.InnerText
+            ?? document.DocumentNode.InnerText);
 
-        if (contentNode is null)
+        return new CrawlResultDto
         {
-            Console.WriteLine(
-                "Ana içerik node'u bulunamadı. " +
-                "Document body kullanılacak.");
-
-            result = CleanText(
-                document.DocumentNode.InnerText);
-        }
-        else
-        {
-            Console.WriteLine(
-                "Ana içerik node'u bulundu.");
-
-            result = CleanText(
-                contentNode.InnerText);
-        }
-
-        Console.WriteLine(
-            $"Temizlenmiş içerik uzunluğu: {result.Length}");
-
-        Console.WriteLine(
-            "Crawler başarıyla tamamlandı.");
-
-        Console.WriteLine(
-            "======================================");
-
-        return result;
+            Content = content,
+            Title = title,
+            CanonicalUrl = canonicalUrl,
+            Doi = doi
+        };
     }
 
     private static void RemoveUnnecessaryNodes(
         HtmlDocument document)
     {
         var nodes = document.DocumentNode.SelectNodes(
-            "//script" +
-            "|//style" +
-            "|//noscript" +
-            "|//svg" +
-            "|//nav" +
-            "|//footer" +
-            "|//header" +
-            "|//aside");
+            "//script|//style|//noscript|//svg|//nav|//footer|//header|//aside");
 
         if (nodes is null)
-        {
-            Console.WriteLine(
-                "Temizlenecek gereksiz node bulunamadı.");
-
             return;
-        }
 
-        Console.WriteLine(
-            $"Temizlenecek node sayısı: {nodes.Count}");
-
-        foreach (var node in nodes)
-        {
+        foreach (var node in nodes.ToList())
             node.Remove();
-        }
     }
 
     private static HtmlNode? FindMainContent(
         HtmlDocument document)
     {
-        var article =
-            document.DocumentNode.SelectSingleNode(
-                "//article");
+        var article = document.DocumentNode.SelectSingleNode("//article");
 
         if (article is not null)
-        {
-            Console.WriteLine(
-                "<article> bulundu.");
-
             return article;
-        }
 
-        var main =
-            document.DocumentNode.SelectSingleNode(
-                "//main");
+        var main = document.DocumentNode.SelectSingleNode("//main");
 
         if (main is not null)
-        {
-            Console.WriteLine(
-                "<main> bulundu.");
-
             return main;
-        }
 
-        var content =
-            document.DocumentNode.SelectSingleNode(
-                "//*[contains(@class, 'content')]");
+        return document.DocumentNode.SelectSingleNode(
+            "//*[contains(concat(' ', normalize-space(@class), ' '), ' content ')]");
+    }
 
-        if (content is not null)
+    private static string? ExtractTitle(HtmlDocument document)
+    {
+        var titleNode = document.DocumentNode.SelectSingleNode(
+            "//meta[@property='og:title']/@content");
+
+        var title = titleNode?.GetAttributeValue("content", null);
+
+        if (string.IsNullOrWhiteSpace(title))
         {
-            Console.WriteLine(
-                "class='content' bulundu.");
-
-            return content;
+            title = document.DocumentNode
+                .SelectSingleNode("//title")
+                ?.InnerText;
         }
 
-        return null;
+        if (string.IsNullOrWhiteSpace(title))
+        {
+            title = document.DocumentNode
+                .SelectSingleNode("//h1")
+                ?.InnerText;
+        }
+
+        return string.IsNullOrWhiteSpace(title)
+            ? null
+            : CleanText(HtmlEntity.DeEntitize(title));
+    }
+
+    private static string? ExtractCanonicalUrl(
+        HtmlDocument document,
+        string originalUrl)
+    {
+        var canonicalNode = document.DocumentNode.SelectSingleNode(
+            "//link[translate(@rel,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='canonical']");
+
+        var canonical = canonicalNode?.GetAttributeValue(
+            "href",
+            null);
+
+        if (string.IsNullOrWhiteSpace(canonical))
+            return originalUrl;
+
+        if (Uri.TryCreate(
+                new Uri(originalUrl),
+                canonical,
+                out var absoluteUri))
+        {
+            return absoluteUri.AbsoluteUri;
+        }
+
+        return originalUrl;
+    }
+
+    private static string? ExtractDoi(HtmlDocument document)
+    {
+        var doiNode = document.DocumentNode.SelectSingleNode(
+            "//meta[translate(@name,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='citation_doi']");
+
+        var doi = doiNode?.GetAttributeValue("content", null);
+
+        if (string.IsNullOrWhiteSpace(doi))
+        {
+            doiNode = document.DocumentNode.SelectSingleNode(
+                "//meta[translate(@name,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='dc.identifier']");
+
+            doi = doiNode?.GetAttributeValue("content", null);
+        }
+
+        if (string.IsNullOrWhiteSpace(doi))
+            return null;
+
+        doi = doi.Trim();
+
+        if (doi.StartsWith(
+                "https://doi.org/",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            doi = doi["https://doi.org/".Length..];
+        }
+        else if (doi.StartsWith(
+                     "http://doi.org/",
+                     StringComparison.OrdinalIgnoreCase))
+        {
+            doi = doi["http://doi.org/".Length..];
+        }
+        else if (doi.StartsWith(
+                     "doi:",
+                     StringComparison.OrdinalIgnoreCase))
+        {
+            doi = doi["doi:".Length..].Trim();
+        }
+
+        return doi;
     }
 
     private static string CleanText(string text)
     {
         return string.Join(
             " ",
-            text.Split(
+            HtmlEntity.DeEntitize(text).Split(
                 [' ', '\r', '\n', '\t'],
                 StringSplitOptions.RemoveEmptyEntries));
     }

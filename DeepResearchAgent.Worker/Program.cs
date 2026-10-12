@@ -53,6 +53,7 @@ builder.Services.AddHttpClient<IResearchSearcher, SearchService>(
 builder.Services.AddScoped<IResearchRepository, ResearchRepository>();
 builder.Services.AddScoped<IResearchService, ResearchService>();
 builder.Services.AddScoped<IResearchPlanner, ResearchPlanner>();
+builder.Services.AddScoped<ISourceRelevanceAnalyzer, SourceRelevanceAnalyzer>();
 
 builder.Services.AddHostedService<Worker>();
 
