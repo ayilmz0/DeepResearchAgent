@@ -1,19 +1,48 @@
 ﻿
-using System.Text.Json;
-using System.Text.RegularExpressions;
 using DeepResearchAgent.Core.Entities;
 using DeepResearchAgent.Engine.DTOs;
 using DeepResearchAgent.Engine.Interfaces;
+using Microsoft.Extensions.Logging;
+using System.Text;
+using System.Text.Json;
 
 namespace DeepResearchAgent.Infrastructure.Services.Reporting;
 
-public class ReportGenerator : IReportGenerator
+public sealed class ReportGenerator : IReportGenerator
 {
     private readonly IAIClient _aiClient;
+    private readonly IResearchChunkRetriever _chunkRetriever;
+    private readonly ILogger<ReportGenerator> _logger;
 
-    public ReportGenerator(IAIClient aiClient)
+    private const int RetrievalTopK = 10;
+    private const int MaxFacts = 100;
+    private const int MaxChunkCharacters = 3000;
+
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
+
+    private static readonly object ResponseSchema = new
+    {
+        type = "object",
+        properties = new
+        {
+            title = new { type = "string" },
+            content = new { type = "string" }
+        },
+        required = new[] { "title", "content" },
+        additionalProperties = false
+    };
+
+    public ReportGenerator(
+        IAIClient aiClient,
+        IResearchChunkRetriever chunkRetriever,
+        ILogger<ReportGenerator> logger)
     {
         _aiClient = aiClient;
+        _chunkRetriever = chunkRetriever;
+        _logger = logger;
     }
 
     public async Task<Report> GenerateAsync(
@@ -21,68 +50,80 @@ public class ReportGenerator : IReportGenerator
         IReadOnlyList<Fact> facts,
         CancellationToken cancellationToken = default)
     {
-        if (facts.Count == 0)
+        ArgumentNullException.ThrowIfNull(research);
+        ArgumentNullException.ThrowIfNull(facts);
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        _logger.LogInformation(
+            "Rapor üretimi başladı. ResearchId: {ResearchId}, FactCount: {FactCount}",
+            research.Id,
+            facts.Count);
+
+        // 1. Araştırma konusuyla ilgili RAG parçalarını getir.
+        var chunks = await _chunkRetriever.SearchAsync(
+            research.Id,
+            research.Query,
+            topK: RetrievalTopK,
+            cancellationToken: cancellationToken);
+
+        var uniqueSourceCount = chunks
+            .Select(x => x.SourceId)
+            .Where(x => x != Guid.Empty)
+            .Distinct()
+            .Count();
+
+        _logger.LogInformation(
+            "RAG sonuçları alındı. ResearchId: {ResearchId}, " +
+            "ChunkCount: {ChunkCount}, SourceCount: {SourceCount}",
+            research.Id,
+            chunks.Count,
+            uniqueSourceCount);
+
+        if (chunks.Count == 0 && facts.Count == 0)
         {
             throw new InvalidOperationException(
-                "Report cannot be generated because no verified facts are available.");
+                "Rapor üretilemedi: Kullanılabilir araştırma bulgusu " +
+                "veya RAG kaynak parçası bulunamadı.");
         }
 
-        var sourceCatalog = BuildSourceCatalog(facts);
-        var prompt = BuildPrompt(research, facts, sourceCatalog);
+        // 2. Rapor üretim promptunu hazırla.
+        var prompt = BuildReportPrompt(
+            research.Query,
+            facts,
+            chunks);
 
-        var responseSchema = new
-        {
-            type = "OBJECT",
-            properties = new
-            {
-                title = new { type = "STRING" },
-                content = new { type = "STRING" }
-            },
-            required = new[]
-            {
-                "title",
-                "content"
-            }
-        };
+        cancellationToken.ThrowIfCancellationRequested();
 
-        var response = await _aiClient.GenerateAsync(
+        // 3. Raporu tek AI çağrısıyla üret.
+        var rawResponse = await _aiClient.GenerateAsync(
             prompt,
-            responseSchema,
+            ResponseSchema,
             cancellationToken);
 
-        var generatedReport =
-            JsonSerializer.Deserialize<GeneratedReportDto>(
-                response,
-                new JsonSerializerOptions
-                {
-                    PropertyNameCaseInsensitive = true
-                });
-
-        if (generatedReport is null)
-        {
-            throw new InvalidOperationException(
-                "Gemini returned an invalid report.");
-        }
+        var generatedReport = DeserializeResponse<GeneratedReportDto>(
+            rawResponse);
 
         if (string.IsNullOrWhiteSpace(generatedReport.Title))
         {
             throw new InvalidOperationException(
-                "Generated report title is empty.");
+                "AI tarafından rapor başlığı oluşturulamadı.");
         }
 
         if (string.IsNullOrWhiteSpace(generatedReport.Content))
         {
             throw new InvalidOperationException(
-                "Generated report content is empty.");
+                "AI tarafından rapor içeriği oluşturulamadı.");
         }
 
-        var content = RemoveUnknownCitations(
+        // 4. Metodoloji ve sınırlılıkları ekle.
+        var content = AppendMethodologyDisclosure(
             generatedReport.Content.Trim(),
-            sourceCatalog);
+            facts.Count,
+            chunks.Count);
 
-        content = AppendSourceReferences(content, sourceCatalog);
-
-        return new Report
+        // 5. Raporu veritabanına kaydedilmek üzere döndür.
+        var report = new Report
         {
             Id = Guid.NewGuid(),
             ResearchId = research.Id,
@@ -90,216 +131,272 @@ public class ReportGenerator : IReportGenerator
             Content = content,
             CreatedAt = DateTime.UtcNow
         };
+
+        _logger.LogInformation(
+            "Rapor üretimi tamamlandı. ResearchId: {ResearchId}, " +
+            "ContentLength: {ContentLength}",
+            research.Id,
+            content.Length);
+
+        return report;
     }
 
-    private static Dictionary<Guid, SourceReference> BuildSourceCatalog(
-        IReadOnlyList<Fact> facts)
+    private static string BuildReportPrompt(
+        string researchQuery,
+        IReadOnlyList<Fact> facts,
+        IReadOnlyList<ResearchChunkSearchResultDto> chunks)
     {
-        var catalog = new Dictionary<Guid, SourceReference>();
-        var labelsByKey = new Dictionary<string, string>(
-            StringComparer.OrdinalIgnoreCase);
+        var builder = new StringBuilder();
 
-        foreach (var fact in facts)
+        builder.AppendLine(
+            "Sen kapsamlı araştırma raporları hazırlayan bir analiz asistanısın.");
+
+        builder.AppendLine();
+        builder.AppendLine("ARAŞTIRMA KONUSU:");
+        builder.AppendLine(researchQuery);
+
+        builder.AppendLine();
+        builder.AppendLine("AMAÇ:");
+        builder.AppendLine(
+            "Araştırma bulgularını ve kaynak metinlerini analiz ederek " +
+            "düzenli, tutarlı, bilgilendirici ve tekrarsız bir rapor oluştur.");
+
+        builder.AppendLine();
+        builder.AppendLine("İÇERİK KURALLARI:");
+
+        builder.AppendLine(
+            "1. Yalnızca verilen bulgulara ve kaynak metinlerine dayanan " +
+            "olgusal bilgiler kullan.");
+
+        builder.AppendLine(
+            "2. Kaynaklarda bulunmayan istatistik, yüzde, tarih, araştırma " +
+            "sonucu, şirket uygulaması veya piyasa tahmini uydurma.");
+
+        builder.AppendLine(
+            "3. Bir bilginin dayanağı yoksa onu kesin bir gerçek olarak sunma. " +
+            "Gerekirse bilgi eksikliğini açıkça belirt.");
+
+        builder.AppendLine(
+            "4. Aynı bilgiyi farklı cümlelerle tekrarlama. Birbiriyle örtüşen " +
+            "bulguları birleştir.");
+
+        builder.AppendLine(
+            "5. Kaynakların desteklemediği gelecek tahminlerini kesin " +
+            "gerçekler gibi yazma.");
+
+        builder.AppendLine(
+            "6. Kaynaklar arasında bağımsız doğrulama yapılmış gibi davranma.");
+
+        builder.AppendLine(
+            "7. Tek bir kaynaktaki iddiayı bütün sektör için geçerli " +
+            "bir sonuç olarak genelleme.");
+
+        builder.AppendLine(
+            "8. Konuyla doğrudan ilgili olmayan bilgileri rapora ekleme.");
+
+        builder.AppendLine(
+            "9. Teknik terimleri gerektiğinde kısa ve anlaşılır biçimde açıkla.");
+
+        builder.AppendLine(
+            "10. Raporu sadece madde listesine dönüştürme. Bulguların " +
+            "birbirleriyle ilişkilerini ve pratik anlamlarını da analiz et.");
+
+        builder.AppendLine(
+            "11. Bilgi eksikse bölümü yapay bilgilerle doldurma.");
+
+        builder.AppendLine(
+            "12. Metin içinde [S1], [S2] gibi kaynak atıfları oluşturma. " +
+            "Ayrı bir kaynakça bölümü de üretme.");
+
+        builder.AppendLine();
+        builder.AppendLine("RAPOR YAPISI:");
+
+        builder.AppendLine(
+            "## 1. Yönetici Özeti\n" +
+            "Araştırmanın temel bulgularını kısa ve anlaşılır biçimde özetle.");
+
+        builder.AppendLine(
+            "## 2. Genel Bakış\n" +
+            "Konunun kapsamını ve sektördeki önemini açıkla.");
+
+        builder.AppendLine(
+            "## 3. Temel Bulgular ve Kullanım Alanları\n" +
+            "Bulguları anlamlı alt başlıklar altında topla. Tekrarları kaldır.");
+
+        builder.AppendLine(
+            "## 4. Fırsatlar ve Potansiyel Faydalar\n" +
+            "Bulgularla desteklenen faydaları ve olası kullanım senaryolarını açıkla.");
+
+        builder.AppendLine(
+            "## 5. Riskler ve Uygulama Zorlukları\n" +
+            "Kaynaklarda veya araştırma bulgularında yer alan sınırlamaları ele al.");
+
+        builder.AppendLine(
+            "## 6. Geleceğe Yönelik Değerlendirme\n" +
+            "Yalnızca mevcut bulguların desteklediği çıkarımları yap. " +
+            "Çıkarımları doğrulanmış gerçeklerden ayır.");
+
+        builder.AppendLine(
+            "## 7. Sonuç ve Öneriler\n" +
+            "Araştırmayı sentezle ve bulgularla uyumlu, uygulanabilir öneriler sun.");
+
+        builder.AppendLine();
+        builder.AppendLine("ARAŞTIRMA BULGULARI:");
+
+        if (facts.Count == 0)
         {
-            var source = fact.Source;
-
-            var title = source?.Title?.Trim() ?? "Unknown source";
-            var url = source?.Url?.Trim() ?? string.Empty;
-
-            // Prefer URL to identify a source.
-            // If no URL exists, use its title.
-            var key = !string.IsNullOrWhiteSpace(url)
-                ? url
-                : !string.IsNullOrWhiteSpace(title)
-                    ? title
-                    : $"unknown-{fact.Id:N}";
-
-            if (!labelsByKey.TryGetValue(key, out var label))
+            builder.AppendLine(
+                "Yapılandırılmış araştırma bulgusu bulunmuyor. " +
+                "Yalnızca aşağıdaki kaynak parçalarından yararlan.");
+        }
+        else
+        {
+            foreach (var fact in facts.Take(MaxFacts))
             {
-                label = $"S{labelsByKey.Count + 1}";
-                labelsByKey[key] = label;
+                builder.AppendLine($"İddia: {fact.Claim}");
+                builder.AppendLine($"Değer: {fact.Value}");
+                builder.AppendLine();
             }
-
-            catalog[fact.Id] = new SourceReference(
-                label,
-                title,
-                url);
         }
 
-        return catalog;
-    }
+        builder.AppendLine();
+        builder.AppendLine("RAG KAYNAK METİNLERİ:");
 
-    private static string BuildPrompt(
-        Research research,
-        IReadOnlyList<Fact> facts,
-        IReadOnlyDictionary<Guid, SourceReference> sourceCatalog)
-    {
-        var factsText = string.Join(
-            "\n\n",
-            facts.Select((fact, index) =>
+        if (chunks.Count == 0)
+        {
+            builder.AppendLine(
+                "Bu aramada RAG kaynak parçası bulunamadı. " +
+                "Kaynak metni varmış gibi davranma.");
+        }
+        else
+        {
+            for (var i = 0; i < chunks.Count; i++)
             {
-                var source = sourceCatalog[fact.Id];
+                var chunk = chunks[i];
 
-                return $"""
-                    FACT F{index + 1}
+                builder.AppendLine(
+                    $"--- Kaynak parçası {i + 1} ---");
 
-                    Fact ID:
-                    {fact.Id}
+                builder.AppendLine($"Başlık: {chunk.SourceTitle}");
+                builder.AppendLine($"URL: {chunk.SourceUrl}");
+                builder.AppendLine($"Parça numarası: {chunk.ChunkIndex}");
 
-                    Claim:
-                    {fact.Claim}
+                var text = chunk.Text ?? string.Empty;
 
-                    Value:
-                    {fact.Value ?? "N/A"}
+                if (text.Length > MaxChunkCharacters)
+                {
+                    text = text[..MaxChunkCharacters];
+                }
 
-                    Direct Source Reference:
-                    [{source.Label}]
+                builder.AppendLine("İçerik:");
+                builder.AppendLine(text);
+                builder.AppendLine();
+            }
+        }
 
-                    Source Title:
-                    {source.Title}
+        builder.AppendLine();
+        builder.AppendLine("ÇIKTI KURALLARI:");
+        builder.AppendLine(
+            "Yalnızca JSON döndür. JSON alanları title ve content olmalıdır. " +
+            "content alanında raporu Markdown biçiminde oluştur.");
 
-                    Source URL:
-                    {source.Url}
-
-                    Verification Status:
-                    {fact.VerificationStatus}
-
-                    Verification Confidence:
-                    {fact.VerificationConfidence?.ToString("F2") ?? "N/A"}
-
-                    Supporting Source Count:
-                    {fact.SupportingSourceCount}
-
-                    Contradicting Source Count:
-                    {fact.ContradictingSourceCount}
-
-                    Verification Summary:
-                    {fact.VerificationSummary ?? "N/A"}
-                    """;
-            }));
-
-        var sourcesText = string.Join(
-            "\n",
-            sourceCatalog.Values
-                .GroupBy(source => source.Label)
-                .Select(group => group.First())
-                .OrderBy(source =>
-                    int.Parse(source.Label.Substring(1)))
-                .Select(source =>
-                    $"[{source.Label}] {source.Title} - " +
-                    (string.IsNullOrWhiteSpace(source.Url)
-                        ? "URL unavailable"
-                        : source.Url)));
-
-        return $"""
-            You are an expert research report writer.
-
-            Research topic:
-            {research.Query}
-
-            Write a detailed, objective and evidence-based research report
-            using only the facts and source information provided below.
-
-            STRICT EVIDENCE RULES:
-
-            1. Do not invent facts, statistics, quotations, URLs or sources.
-            2. Do not introduce claims that are not supported by the provided facts.
-            3. Add an inline citation such as [S1] to every important factual claim.
-            4. Use only source labels explicitly associated with the relevant facts.
-            5. Never invent a source label.
-            6. A source being listed does not automatically prove every claim.
-            7. Do not describe a fact's direct source as multiple independent sources.
-            8. Supporting Source Count is a count, not a list of source identities.
-            9. Do not infer the identities of supporting sources from that count.
-            10. Distinguish Supported from PartiallySupported facts.
-            11. Do not describe partially supported claims as established facts.
-            12. Preserve the original meaning of numerical values and dates.
-            13. If evidence is insufficient, explain the limitation instead
-                of filling the gap with assumptions.
-            14. Prefer relevant facts with higher verification confidence.
-            15. Do not claim that a source proves something unless the provided
-                fact and verification information justify that conclusion.
-
-            REPORT STRUCTURE:
-
-            # Introduction
-            Explain the research question and scope.
-
-            # Key Findings
-            Summarize the most important findings with inline citations.
-
-            # Detailed Analysis
-            Explain each major finding, its evidence and its implications.
-            Include specific examples only when provided in the facts.
-
-            # Evidence and Reliability
-            Discuss verification status, confidence and evidence limitations.
-            Do not imply that a confidence score is a statistical probability.
-
-            # Conclusion
-            Summarize only conclusions supported by the evidence.
-
-            # Limitations
-            Explain gaps, uncertainty, conflicting evidence and unsupported claims.
-
-            Do not generate a Sources or References section.
-            The application will append the source list automatically.
-
-            VERIFIED FACTS:
-
-            {factsText}
-
-            AVAILABLE SOURCE CATALOG:
-
-            {sourcesText}
-            """;
+        return builder.ToString();
     }
 
-    private static string RemoveUnknownCitations(
+    private static string AppendMethodologyDisclosure(
         string content,
-        IReadOnlyDictionary<Guid, SourceReference> sourceCatalog)
+        int factCount,
+        int chunkCount)
     {
-        var validLabels = sourceCatalog.Values
-            .Select(source => source.Label)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var builder = new StringBuilder(content.Trim());
 
-        return Regex.Replace(
-            content,
-            @"\[S\d+\]",
-            match => validLabels.Contains(match.Value[1..^1])
-                ? match.Value
-                : string.Empty);
+        builder.AppendLine();
+        builder.AppendLine();
+        builder.AppendLine("## Metodoloji ve Sınırlılıklar");
+        builder.AppendLine();
+
+        builder.AppendLine(
+            "Bu rapor, araştırma sürecinde elde edilen yapılandırılmış " +
+            "bulgular ve RAG yöntemiyle getirilen kaynak metinleri " +
+            "kullanılarak hazırlanmıştır.");
+
+        builder.AppendLine();
+
+        builder.AppendLine(
+            $"Rapor oluşturulurken {factCount} yapılandırılmış bulgu " +
+            $"ve {chunkCount} kaynak metni parçası modele sunulmuştur.");
+
+        builder.AppendLine();
+
+        builder.AppendLine(
+            "Bu sayılar, bilgilerin doğruluğunun bağımsız olarak " +
+            "doğrulandığı anlamına gelmez. Raporun kapsamı ve güvenilirliği, " +
+            "araştırma sırasında elde edilen verilerin niteliğiyle sınırlıdır.");
+
+        return builder.ToString();
     }
 
-    private static string AppendSourceReferences(
-        string content,
-        IReadOnlyDictionary<Guid, SourceReference> sourceCatalog)
+    private static T DeserializeResponse<T>(string response)
     {
-        var sources = sourceCatalog.Values
-            .GroupBy(source => source.Label)
-            .Select(group => group.First())
-            .OrderBy(source =>
-                int.Parse(source.Label.Substring(1)))
-            .ToList();
+        if (string.IsNullOrWhiteSpace(response))
+        {
+            throw new InvalidOperationException(
+                "AI rapor üretimi boş yanıt döndürdü.");
+        }
 
-        var references = string.Join(
-            "\n",
-            sources.Select(source =>
-                string.IsNullOrWhiteSpace(source.Url)
-                    ? $"- [{source.Label}] {source.Title} (URL unavailable)"
-                    : $"- [{source.Label}] [{source.Title}]({source.Url})"));
+        var json = ExtractJson(response);
 
-        return $"""
-            {content}
+        try
+        {
+            var result = JsonSerializer.Deserialize<T>(
+                json,
+                JsonOptions);
 
-            ## Sources
-
-            {references}
-            """;
+            return result ?? throw new InvalidOperationException(
+                "AI yanıtı boş bir nesneye dönüştürüldü.");
+        }
+        catch (JsonException exception)
+        {
+            throw new InvalidOperationException(
+                "AI yanıtı beklenen JSON formatında değil.",
+                exception);
+        }
     }
 
-    private sealed record SourceReference(
-        string Label,
-        string Title,
-        string Url);
+    private static string ExtractJson(string response)
+    {
+        var text = response.Trim();
+
+        if (text.StartsWith("```", StringComparison.Ordinal))
+        {
+            var firstNewLine = text.IndexOf('\n');
+
+            if (firstNewLine >= 0)
+            {
+                text = text[(firstNewLine + 1)..];
+            }
+
+            if (text.EndsWith("```", StringComparison.Ordinal))
+            {
+                text = text[..^3].Trim();
+            }
+        }
+
+        var start = text.IndexOf('{');
+        var end = text.LastIndexOf('}');
+
+        if (start >= 0 && end > start)
+        {
+            return text[start..(end + 1)];
+        }
+
+        return text;
+    }
+
+    private sealed class GeneratedReportDto
+    {
+        public string Title { get; set; } = string.Empty;
+
+        public string Content { get; set; } = string.Empty;
+    }
 }
