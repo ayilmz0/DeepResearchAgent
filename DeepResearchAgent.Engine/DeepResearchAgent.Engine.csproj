@@ -10,4 +10,8 @@
     <ProjectReference Include="..\DeepResearchAgent.Core\DeepResearchAgent.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.13" />
+  </ItemGroup>
+
 </Project>

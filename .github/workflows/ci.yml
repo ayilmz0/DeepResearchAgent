@@ -1,0 +1,43 @@
+
+name: DeepResearchAgent CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - develop
+
+  pull_request:
+    branches:
+      - main
+      - master
+      - develop
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: Build and Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore dependencies
+        run: dotnet restore DeepResearchAgent.slnx
+
+      - name: Build solution
+        run: dotnet build DeepResearchAgent.slnx --configuration Release --no-restore
+
+      - name: Run tests
+        run: dotnet test DeepResearchAgent.slnx --configuration Release --no-build --logger "console;verbosity=normal"
