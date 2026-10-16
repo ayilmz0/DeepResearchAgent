@@ -1,4 +1,4 @@
-﻿
+﻿using Microsoft.Extensions.Logging;
 using DeepResearchAgent.Core.Entities;
 using DeepResearchAgent.Core.Enums;
 using DeepResearchAgent.Engine.DTOs;
@@ -18,6 +18,7 @@ public class ResearchService : IResearchService
     private readonly IReportGenerator _reportGenerator;
     private readonly ISourceRelevanceAnalyzer _sourceRelevanceAnalyzer;
     private readonly IResearchChunkIndexer _chunkIndexer;
+    private readonly ILogger<ResearchService> _logger;
 
     public ResearchService(
         IResearchRepository researchRepository,
@@ -27,7 +28,8 @@ public class ResearchService : IResearchService
         IResearchAnalyzer researchAnalyzer,
         IReportGenerator reportGenerator,
         ISourceRelevanceAnalyzer sourceRelevanceAnalyzer,
-        IResearchChunkIndexer chunkIndexer)
+        IResearchChunkIndexer chunkIndexer,
+        ILogger<ResearchService> logger)
     {
         _researchRepository = researchRepository;
         _researchPlanner = researchPlanner;
@@ -37,6 +39,7 @@ public class ResearchService : IResearchService
         _reportGenerator = reportGenerator;
         _sourceRelevanceAnalyzer = sourceRelevanceAnalyzer;
         _chunkIndexer = chunkIndexer;
+        _logger = logger;
     }
 
     private static string NormalizeDoi(string doi)
@@ -327,14 +330,28 @@ public class ResearchService : IResearchService
                     source.CrawlSucceeded = false;
                 }
                 catch (OperationCanceledException)
+                    when (!cancellationToken.IsCancellationRequested)
                 {
+                    _logger.LogWarning(
+                        "Crawler timeout nedeniyle kaynak taranamadı. URL: {Url}",
+                        searchResult.Url);
+
+                    source.CrawlSucceeded = false;
+                }
+                catch (OperationCanceledException)
+                {
+                    _logger.LogInformation(
+                        "Araştırma iptal edildi. URL: {Url}",
+                        searchResult.Url);
+
                     throw;
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine(
-                        $"Crawl başarısız: {searchResult.Url}");
-                    Console.WriteLine(ex);
+                    _logger.LogWarning(
+                        ex,
+                        "Kaynak taranamadı. URL: {Url}",
+                        searchResult.Url);
 
                     source.CrawlSucceeded = false;
                 }

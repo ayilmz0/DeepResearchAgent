@@ -33,17 +33,7 @@ builder.Services.AddScoped<IFactRelevanceAnalyzer, FactRelevanceAnalyzer>();
 
 builder.Services.AddScoped<IReportGenerator, ReportGenerator>();
 
-builder.Services.AddHttpClient<ICrawler, WebCrawler>(
-    client =>
-    {
-        client.Timeout = TimeSpan.FromSeconds(30);
-
-        client.DefaultRequestHeaders.UserAgent.ParseAdd(
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
-            "AppleWebKit/537.36 " +
-            "(KHTML, like Gecko) " +
-            "Chrome/154.0.0.0 Safari/537.36");
-    });
+builder.Services.AddCrawlerHttpClient();
 
 builder.Services.AddCors(options =>
 {
@@ -89,7 +79,8 @@ builder.Services.AddHttpClient<
     IResearchChunkRetriever,
     QdrantResearchChunkRetriever>(client =>
     {
-        client.BaseAddress = new Uri("http://localhost:6333/");
+        client.BaseAddress = new Uri(
+        builder.Configuration["Qdrant:BaseUrl"] ?? "http://localhost:6333/");
         client.Timeout = TimeSpan.FromMinutes(2);
     });
 
